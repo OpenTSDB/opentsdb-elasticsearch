@@ -213,18 +213,16 @@ public final class ElasticSearch extends SearchPlugin {
     index_threads = config.getInt("tsd.search.elasticsearch.index_threads");
     
     // set index/types
+    index = config.getString("tsd.search.elasticsearch.index");
+    if (index == null || index.isEmpty()) {
+      throw new IllegalArgumentException("Invalid index configuration value");
+    }
     tsmeta_type = config.getString("tsd.search.elasticsearch.tsmeta_type");
     if (tsmeta_type == null || tsmeta_type.isEmpty()) {
       throw new IllegalArgumentException(
           "Invalid tsmeta_type configuration value");
-    }
-    
-    index = config.getString("tsd.search.elasticsearch.uidmeta_type");
-    if (index == null || index.isEmpty()) {
-      throw new IllegalArgumentException("Invalid index configuration value");
-    }
-    
-    uidmeta_type = config.getString("tsd.search.elasticsearch.index");
+    }    
+    uidmeta_type = config.getString("tsd.search.elasticsearch.uidmeta_type");
     if (uidmeta_type == null || uidmeta_type.isEmpty()) {
       throw new IllegalArgumentException(
           "Invalid uidmeta_type configuration value");
