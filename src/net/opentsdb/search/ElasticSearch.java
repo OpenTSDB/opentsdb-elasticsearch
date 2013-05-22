@@ -34,6 +34,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import net.opentsdb.core.TSDB;
+import net.opentsdb.meta.Annotation;
 import net.opentsdb.meta.TSMeta;
 import net.opentsdb.meta.UIDMeta;
 import net.opentsdb.utils.JSON;
@@ -49,6 +50,8 @@ public final class ElasticSearch extends SearchPlugin {
   private final ConcurrentLinkedQueue<String> tsuids_delete;
   private final ConcurrentLinkedQueue<UIDMeta> uids;
   private final ConcurrentLinkedQueue<UIDMeta> uids_delete;
+  private final ConcurrentLinkedQueue<Annotation> annotations;
+  private final ConcurrentLinkedQueue<Annotation> annotations_delete;
   
   private Thread[] indexers = null;
   private ImmutableList<HttpHost> hosts;
@@ -57,6 +60,7 @@ public final class ElasticSearch extends SearchPlugin {
   private String index = "opentsdb";
   private String tsmeta_type = "tsmeta";
   private String uidmeta_type = "uidmeta";
+  private String annotation_type = "annotation";
   private ESPluginConfig config = null;
   
   /**
@@ -67,6 +71,8 @@ public final class ElasticSearch extends SearchPlugin {
     tsuids_delete = new ConcurrentLinkedQueue<String>();
     uids = new ConcurrentLinkedQueue<UIDMeta>();
     uids_delete = new ConcurrentLinkedQueue<UIDMeta>();
+    annotations = new ConcurrentLinkedQueue<Annotation>();
+    annotations_delete = new ConcurrentLinkedQueue<Annotation>();
   }
   
   /**
@@ -109,7 +115,7 @@ public final class ElasticSearch extends SearchPlugin {
     if (meta != null) {
       tsuids.add(meta);
     }
-    return null;
+    return Deferred.fromResult(null);
   }
 
   /**
@@ -121,7 +127,7 @@ public final class ElasticSearch extends SearchPlugin {
     if (tsuid != null) {
       tsuids_delete.add(tsuid);
     }
-    return null;
+    return Deferred.fromResult(null);
   }
   
   /**
@@ -134,7 +140,7 @@ public final class ElasticSearch extends SearchPlugin {
     if (meta != null) {
       uids.add(meta);
     }
-    return null;
+    return Deferred.fromResult(null);
   }
 
   /**
@@ -147,6 +153,36 @@ public final class ElasticSearch extends SearchPlugin {
       uids_delete.add(meta);
     }
     return null;
+  }
+  
+  /**
+   * Indexes an annotation object
+   * <b>Note:</b> Unique Document ID = TSUID and Start Time
+   * @param note The annotation to index
+   * @return A deferred object that indicates the completion of the request.
+   * The {@link Object} has not special meaning and can be {@code null}
+   * (think of it as {@code Deferred<Void>}).
+   */
+  public Deferred<Object> indexAnnotation(final Annotation note) {
+    if (note != null) {
+      annotations.add(note);
+    }
+    return Deferred.fromResult(null);
+  }
+
+  /**
+   * Called to remove an annotation object from the index
+   * <b>Note:</b> Unique Document ID = TSUID and Start Time
+   * @param note The annotation to remove
+   * @return A deferred object that indicates the completion of the request.
+   * The {@link Object} has not special meaning and can be {@code null}
+   * (think of it as {@code Deferred<Void>}).
+   */
+  public Deferred<Object> deleteAnnotation(final Annotation note) {
+    if (note != null) {
+      annotations_delete.add(note);
+    }
+    return Deferred.fromResult(null);
   }
   
   /**
@@ -269,6 +305,18 @@ public final class ElasticSearch extends SearchPlugin {
           found_one = true;
         }
         
+        Annotation note = annotations.poll();
+        if (note != null) {
+          indexAnnotation(note);
+          found_one = true;
+        }
+        
+        note = annotations_delete.poll();
+        if (note != null) {
+          deleteAnnotation(note);
+          found_one = true;
+        }
+        
         if (!found_one) {
           try {
             Thread.sleep(1000);
@@ -322,7 +370,7 @@ public final class ElasticSearch extends SearchPlugin {
      * Pushes a UIDMeta object to the Elastic Search boxes over HTTP
      * @param meta The meta data to publish
      */
-    private void indexUID(final UIDMeta meta) {      
+    private void indexUID(final UIDMeta meta) {
       final HttpPost request = new HttpPost("/" + index + "/" + 
           uidmeta_type + "/" + meta.getType().toString() + meta.getUID() + 
           "?replication=async");
@@ -352,6 +400,45 @@ public final class ElasticSearch extends SearchPlugin {
         LOG.trace("Successfully deleted UID: " + meta);
       } else {
         LOG.error("Failed to delete UID: " + meta + " with error: " + response);
+      }
+    }
+    
+    /**
+     * Pushes an annotation object to the Elastic Search boexes over HTTP
+     * @param note The annotation to index
+     */
+    private void indexAnnotation(final Annotation note) {
+      final HttpPost request = new HttpPost("/" + index + "/" + 
+          annotation_type + "/" + note.getStartTime() + 
+          note != null ? note.getTSUID() : "" + "?replication=async");
+      try {
+        request.setEntity(new StringEntity(JSON.serializeToString(note)));
+      } catch (UnsupportedEncodingException e) {
+        LOG.error("Encoding Error", e);
+      }      
+      final String response = execute(request);
+      if (response == null) {
+        LOG.trace("Successfully indexed annotation: " + note);
+      } else {
+        LOG.error("Failed to index annotation: " + note + " with error: " + 
+            response);
+      }
+    }
+    
+    /**
+     * Deletes an annotation document from the search servers
+     * @param note The annotation to delete
+     */
+    private void deleteAnnotation(final Annotation note) {
+      final HttpDelete request = new HttpDelete("/" + index + "/" + 
+          annotation_type + "/" +  note.getStartTime() + 
+          note != null ? note.getTSUID() : "" + "?replication=async");
+      final String response = execute(request);
+      if (response == null) {
+        LOG.trace("Successfully deleted annotation: " + note);
+      } else {
+        LOG.error("Failed to delete annotation: " + note + " with error: " + 
+            response);
       }
     }
     
