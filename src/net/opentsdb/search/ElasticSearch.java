@@ -16,15 +16,24 @@ import httpfailover.FailoverHttpClient;
 
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpHost;
 import org.apache.http.HttpRequest;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.ClientProtocolException;
+import org.apache.http.client.fluent.Async;
+import org.apache.http.client.fluent.Content;
+import org.apache.http.client.fluent.Request;
 import org.apache.http.client.methods.HttpDelete;
 import org.apache.http.client.methods.HttpPost;
+import org.apache.http.concurrent.FutureCallback;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.conn.PoolingClientConnectionManager;
 import org.apache.http.protocol.BasicHttpContext;
@@ -37,8 +46,12 @@ import net.opentsdb.core.TSDB;
 import net.opentsdb.meta.Annotation;
 import net.opentsdb.meta.TSMeta;
 import net.opentsdb.meta.UIDMeta;
+import net.opentsdb.search.SearchQuery.SearchType;
 import net.opentsdb.utils.JSON;
 
+import com.fasterxml.jackson.core.JsonParseException;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableList.Builder;
 import com.stumbleupon.async.Deferred;
@@ -52,6 +65,7 @@ public final class ElasticSearch extends SearchPlugin {
   private final ConcurrentLinkedQueue<UIDMeta> uids_delete;
   private final ConcurrentLinkedQueue<Annotation> annotations;
   private final ConcurrentLinkedQueue<Annotation> annotations_delete;
+  private final ExecutorService threadpool = Executors.newFixedThreadPool(2);
   
   private Thread[] indexers = null;
   private ImmutableList<HttpHost> hosts;
@@ -183,6 +197,46 @@ public final class ElasticSearch extends SearchPlugin {
       annotations_delete.add(note);
     }
     return Deferred.fromResult(null);
+  }
+  
+  public Deferred<SearchQuery> executeQuery(final SearchQuery query) {
+    final Deferred<SearchQuery> result = new Deferred<SearchQuery>();
+    
+    final StringBuilder uri = new StringBuilder("http://");
+    uri.append(hosts.get(0).toHostString());
+    uri.append("/").append(index).append("/");
+    switch(query.getType()) {
+      case TSMETA:
+      case TSMETA_SUMMARY:
+      case TSUIDS:
+        uri.append(tsmeta_type);
+        break;
+      case UIDMETA:
+        uri.append(uidmeta_type);
+        break;
+      case ANNOTATION:
+        uri.append(annotation_type);
+        break;
+    }
+    uri.append("/_search");
+    
+    // setup the query body
+    HashMap<String, Object> body = new HashMap<String, Object>(3);
+    body.put("size", query.getLimit());
+    body.put("from", query.getStartIndex());
+    
+    HashMap<String, Object> qs = new HashMap<String, Object>(1);
+    body.put("query", qs);
+    HashMap<String, String> query_string = new HashMap<String, String>(1);
+    query_string.put("query", query.getQuery());
+    qs.put("query_string", query_string);
+    
+    final Request request = Request.Post(uri.toString());
+    request.bodyByteArray(JSON.serializeToBytes(body));
+    
+    final Async async = Async.newInstance().use(threadpool);
+    async.execute(request, new SearchCB(query, result));
+    return result;
   }
   
   /**
@@ -478,5 +532,129 @@ public final class ElasticSearch extends SearchPlugin {
       }
       return "An exception was thrown";
     }
+  }
+
+  final class SearchCB implements FutureCallback<Content> {
+
+    final SearchQuery query;
+    final Deferred<SearchQuery> result;
+    
+    public SearchCB(final SearchQuery query, final Deferred<SearchQuery> result) {
+      this.query = query;
+      this.result = result;
+    }
+    
+    @Override
+    public void cancelled() {
+      result.callback(null);
+    }
+
+    @Override
+    public void completed(final Content content) {
+      
+      final JsonParser jp = JSON.parseToStream(content.asStream());
+      if (jp == null) {
+        LOG.warn("Query response was null or empty");
+        result.callback(null);
+        return;
+      }
+      
+      try {
+        JsonToken next = jp.nextToken();
+        if (next != JsonToken.START_OBJECT) {
+          LOG.error("Error: root should be object: quiting.");
+          result.callback(null);
+          return;
+        }
+      
+        final List<Object> objects = new ArrayList<Object>();
+        
+        // loop through the JSON structure
+        String parent = "";
+        String last = "";
+        
+        while (jp.nextToken() != null) {
+          String fieldName = jp.getCurrentName();
+          if (fieldName != null)
+            last = fieldName;
+          
+          if (jp.getCurrentToken() == JsonToken.START_ARRAY || 
+              jp.getCurrentToken() == JsonToken.START_OBJECT)
+            parent = last;
+          
+          if (fieldName != null && fieldName.equals("_source")) {
+            if (jp.nextToken() == JsonToken.START_OBJECT) {
+              // parse depending on type
+              switch (query.getType()) {
+                case TSMETA:
+                case TSMETA_SUMMARY:
+                case TSUIDS:
+                  final TSMeta meta = jp.readValueAs(TSMeta.class);
+                  if (query.getType() == SearchType.TSMETA) {
+                    objects.add(meta);
+                  } else if (query.getType() == SearchType.TSUIDS) {
+                    objects.add(meta.getTSUID());
+                  } else {
+                    final HashMap<String, Object> map = 
+                      new HashMap<String, Object>(3);
+                    map.put("tsuid", meta.getTSUID());
+                    map.put("metric", meta.getMetric().getName());
+                    final HashMap<String, String> tags = 
+                      new HashMap<String, String>(meta.getTags().size() / 2);
+                    int idx = 0;
+                    String name = "";
+                    for (final UIDMeta uid : meta.getTags()) {
+                      if (idx % 2 == 0) {
+                        name = uid.getName();
+                      } else {
+                        tags.put(name, uid.getName());
+                      }
+                      idx++;
+                    }
+                    map.put("tags", tags);
+                    objects.add(map);
+                  }
+                  break;
+                case UIDMETA:
+                  final UIDMeta uid = jp.readValueAs(UIDMeta.class);
+                  objects.add(uid);
+                  break;
+                case ANNOTATION:
+                  final Annotation note = jp.readValueAs(Annotation.class);
+                  objects.add(note);
+                  break;
+              }
+            }else
+              LOG.warn("Invalid _source value from ES, should have been a START_OBJECT");
+          } else if (fieldName != null && jp.getCurrentToken() != JsonToken.FIELD_NAME &&
+              parent.equals("hits") && fieldName.equals("total")){
+            LOG.trace("Total hits: [" + jp.getValueAsInt() + "]");
+            query.setTotalResults(jp.getValueAsInt());
+          } else if (fieldName != null && jp.getCurrentToken() != JsonToken.FIELD_NAME &&
+              fieldName.equals("took")){
+            LOG.trace("Time taken: [" + jp.getValueAsInt() + "]");
+            query.setTime(jp.getValueAsInt());
+          }
+          
+          query.setResults(objects);
+        }
+        
+        result.callback(query);
+        
+      } catch (JsonParseException e) {
+        LOG.error("Query failed", e);
+        throw new RuntimeException(e);
+      } catch (IOException e) {
+        LOG.error("Query failed", e);
+        throw new RuntimeException(e);
+      }
+    }
+
+    @Override
+    public void failed(final Exception e) {
+      LOG.error("Query failed", e);
+      throw new RuntimeException(e);
+    }
+    
   }
 }
