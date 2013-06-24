@@ -15,30 +15,19 @@ package net.opentsdb.search;
 import httpfailover.FailoverHttpClient;
 
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
-import java.util.concurrent.ConcurrentLinkedQueue;
+
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-import org.apache.http.HttpEntity;
 import org.apache.http.HttpHost;
-import org.apache.http.HttpRequest;
-import org.apache.http.HttpResponse;
-import org.apache.http.client.ClientProtocolException;
 import org.apache.http.client.fluent.Async;
 import org.apache.http.client.fluent.Content;
 import org.apache.http.client.fluent.Request;
-import org.apache.http.client.methods.HttpDelete;
-import org.apache.http.client.methods.HttpPost;
 import org.apache.http.concurrent.FutureCallback;
-import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.conn.PoolingClientConnectionManager;
-import org.apache.http.protocol.BasicHttpContext;
-import org.apache.http.protocol.HttpContext;
-import org.apache.http.util.EntityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -47,6 +36,7 @@ import net.opentsdb.meta.Annotation;
 import net.opentsdb.meta.TSMeta;
 import net.opentsdb.meta.UIDMeta;
 import net.opentsdb.search.SearchQuery.SearchType;
+import net.opentsdb.stats.StatsCollector;
 import net.opentsdb.utils.JSON;
 
 import com.fasterxml.jackson.core.JsonParseException;
@@ -58,19 +48,12 @@ import com.stumbleupon.async.Deferred;
 
 public final class ElasticSearch extends SearchPlugin {
   private static final Logger LOG = LoggerFactory.getLogger(ElasticSearch.class);
+
+  private final ExecutorService threadpool = Executors.newFixedThreadPool(4);
+  private final Async async = Async.newInstance().use(threadpool);
   
-  private final ConcurrentLinkedQueue<TSMeta> tsuids;
-  private final ConcurrentLinkedQueue<String> tsuids_delete;
-  private final ConcurrentLinkedQueue<UIDMeta> uids;
-  private final ConcurrentLinkedQueue<UIDMeta> uids_delete;
-  private final ConcurrentLinkedQueue<Annotation> annotations;
-  private final ConcurrentLinkedQueue<Annotation> annotations_delete;
-  private final ExecutorService threadpool = Executors.newFixedThreadPool(2);
-  
-  private Thread[] indexers = null;
   private ImmutableList<HttpHost> hosts;
   private FailoverHttpClient httpClient;
-  private int index_threads = 1;
   private String index = "opentsdb";
   private String tsmeta_type = "tsmeta";
   private String uidmeta_type = "uidmeta";
@@ -81,12 +64,7 @@ public final class ElasticSearch extends SearchPlugin {
    * Default constructor
    */
   public ElasticSearch() {
-    tsuids = new ConcurrentLinkedQueue<TSMeta>();
-    tsuids_delete = new ConcurrentLinkedQueue<String>();
-    uids = new ConcurrentLinkedQueue<UIDMeta>();
-    uids_delete = new ConcurrentLinkedQueue<UIDMeta>();
-    annotations = new ConcurrentLinkedQueue<Annotation>();
-    annotations_delete = new ConcurrentLinkedQueue<Annotation>();
+
   }
   
   /**
@@ -110,13 +88,6 @@ public final class ElasticSearch extends SearchPlugin {
     http_pool.setMaxTotal(
         config.getInt("tsd.search.elasticsearch.pool.max_total"));
     httpClient = new FailoverHttpClient(http_pool);
-
-    // start worker threads
-    indexers = new SearchIndexer[index_threads];
-    for (int i = 0; i < index_threads; i++) {
-      indexers[i] = new SearchIndexer();
-      indexers[i].start();
-    }
   }
   
   /**
@@ -126,10 +97,17 @@ public final class ElasticSearch extends SearchPlugin {
    */
   @Override
   public Deferred<Object> indexTSMeta(final TSMeta meta) {
-    if (meta != null) {
-      tsuids.add(meta);
-    }
-    return Deferred.fromResult(null);
+    final StringBuilder uri = new StringBuilder("http://");
+    uri.append(hosts.get(0).toHostString());
+    uri.append("/").append(index).append("/").append(tsmeta_type).append("/");
+    uri.append(meta.getTSUID()).append("?replication=async");
+    
+    final Request post = Request.Post(uri.toString())
+      .bodyByteArray(JSON.serializeToBytes(meta));
+    
+    final Deferred<Object> result = new Deferred<Object>();
+    async.execute(post, new AsyncCB(result));
+    return result;
   }
 
   /**
@@ -138,10 +116,16 @@ public final class ElasticSearch extends SearchPlugin {
    * @return null
    */
   public Deferred<Object> deleteTSMeta(final String tsuid) {
-    if (tsuid != null) {
-      tsuids_delete.add(tsuid);
-    }
-    return Deferred.fromResult(null);
+    final StringBuilder uri = new StringBuilder("http://");
+    uri.append(hosts.get(0).toHostString());
+    uri.append("/").append(index).append("/").append(tsmeta_type).append("/");
+    uri.append(tsuid).append("?replication=async");
+    
+    final Request delete = Request.Delete(uri.toString());
+    
+    final Deferred<Object> result = new Deferred<Object>();
+    async.execute(delete, new AsyncCB(result));
+    return result;
   }
   
   /**
@@ -151,10 +135,18 @@ public final class ElasticSearch extends SearchPlugin {
    */
   @Override
   public Deferred<Object> indexUIDMeta(final UIDMeta meta) {
-    if (meta != null) {
-      uids.add(meta);
-    }
-    return Deferred.fromResult(null);
+    final StringBuilder uri = new StringBuilder("http://");
+    uri.append(hosts.get(0).toHostString());
+    uri.append("/").append(index).append("/").append(uidmeta_type).append("/");
+    uri.append(meta.getType().toString()).append(meta.getUID());
+    uri.append("?replication=async");
+    
+    final Request post = Request.Post(uri.toString())
+      .bodyByteArray(JSON.serializeToBytes(meta));
+    
+    final Deferred<Object> result = new Deferred<Object>();
+    async.execute(post, new AsyncCB(result));
+    return result;
   }
 
   /**
@@ -163,10 +155,17 @@ public final class ElasticSearch extends SearchPlugin {
    * @return null
    */
   public Deferred<Object> deleteUIDMeta(final UIDMeta meta) {
-    if (meta != null) {
-      uids_delete.add(meta);
-    }
-    return null;
+    final StringBuilder uri = new StringBuilder("http://");
+    uri.append(hosts.get(0).toHostString());
+    uri.append("/").append(index).append("/").append(tsmeta_type).append("/");
+    uri.append(meta.getType().toString()).append(meta.getUID());
+    uri.append("?replication=async");
+    
+    final Request delete = Request.Delete(uri.toString());
+    
+    final Deferred<Object> result = new Deferred<Object>();
+    async.execute(delete, new AsyncCB(result));
+    return result;
   }
   
   /**
@@ -178,10 +177,21 @@ public final class ElasticSearch extends SearchPlugin {
    * (think of it as {@code Deferred<Void>}).
    */
   public Deferred<Object> indexAnnotation(final Annotation note) {
-    if (note != null) {
-      annotations.add(note);
+    final StringBuilder uri = new StringBuilder("http://");
+    uri.append(hosts.get(0).toHostString());
+    uri.append("/").append(index).append("/").append(annotation_type).append("/");
+    uri.append(note.getStartTime());
+    if (note != null ) {
+      uri.append(note.getTSUID());
     }
-    return Deferred.fromResult(null);
+    uri.append("?replication=async");
+    
+    final Request post = Request.Post(uri.toString())
+      .bodyByteArray(JSON.serializeToBytes(note));
+    
+    final Deferred<Object> result = new Deferred<Object>();
+    async.execute(post, new AsyncCB(result));
+    return result;
   }
 
   /**
@@ -193,10 +203,19 @@ public final class ElasticSearch extends SearchPlugin {
    * (think of it as {@code Deferred<Void>}).
    */
   public Deferred<Object> deleteAnnotation(final Annotation note) {
-    if (note != null) {
-      annotations_delete.add(note);
+    final StringBuilder uri = new StringBuilder("http://");
+    uri.append(hosts.get(0).toHostString());
+    uri.append("/").append(index).append("/").append(annotation_type).append("/");
+    uri.append(note.getStartTime());
+    if (note != null ) {
+      uri.append(note.getTSUID());
     }
-    return Deferred.fromResult(null);
+    
+    final Request delete = Request.Delete(uri.toString());
+    
+    final Deferred<Object> result = new Deferred<Object>();
+    async.execute(delete, new AsyncCB(result));
+    return result;
   }
   
   public Deferred<SearchQuery> executeQuery(final SearchQuery query) {
@@ -253,6 +272,10 @@ public final class ElasticSearch extends SearchPlugin {
     return "2.0.0";
   }
   
+  public void collectStats(final StatsCollector collector) {
+    // do nothing for now
+  }
+  
   /**
    * Parses semicoln separated hosts from a config line into a host list. If
    * a given host includes a port, e.g. "host:port", the port will be parsed, 
@@ -298,10 +321,7 @@ public final class ElasticSearch extends SearchPlugin {
       throw new IllegalArgumentException("Missing search hosts configuration");
     }
     setHosts(host_config);
-    
-    // set thread count
-    index_threads = config.getInt("tsd.search.elasticsearch.index_threads");
-    
+
     // set index/types
     index = config.getString("tsd.search.elasticsearch.index");
     if (index == null || index.isEmpty()) {
@@ -319,219 +339,29 @@ public final class ElasticSearch extends SearchPlugin {
     }
   }
   
-  /**
-   * A worker thread that watches all of the queues, pushing waiting objects out
-   * to the indexer
-   */
-  final class SearchIndexer extends Thread {
-    public SearchIndexer() {
-      super("SearchIndexer");
+  final class AsyncCB implements FutureCallback<Content> {
+
+    final Deferred<Object> deferred;
+    
+    public AsyncCB(final Deferred<Object> deferred) {
+      this.deferred = deferred;
     }
     
-    /**
-     * Loops indefinitely and processes the queues
-     */
-    public void run() {
-      // as long as we find some data, keep looping, otherwise sleep a bit
-      while (true) { 
-        boolean found_one = false;
-        final TSMeta tsmeta = tsuids.poll();
-        if (tsmeta != null) {
-          indexTSUID(tsmeta);
-          found_one = true;
-        }
-        
-        final String tsuid = tsuids_delete.poll();
-        if (tsuid != null) {
-          deleteTSUID(tsuid);
-          found_one = true;
-        }
-        
-        UIDMeta uidmeta = uids.poll();
-        if (uidmeta != null) {
-          indexUID(uidmeta);
-          found_one = true;
-        }
-        
-        uidmeta = uids_delete.poll(); 
-        if (uidmeta != null) {
-          deleteUID(uidmeta);
-          found_one = true;
-        }
-        
-        Annotation note = annotations.poll();
-        if (note != null) {
-          indexAnnotation(note);
-          found_one = true;
-        }
-        
-        note = annotations_delete.poll();
-        if (note != null) {
-          deleteAnnotation(note);
-          found_one = true;
-        }
-        
-        if (!found_one) {
-          try {
-            Thread.sleep(1000);
-          } catch (InterruptedException e) {
-            LOG.info("Search worker thread interrupted. Quiting");
-            return;
-          }
-        }
-      }
+    @Override
+    public void cancelled() {
+      LOG.warn("Post was cancelled");
+    }
+
+    @Override
+    public void completed(final Content content) {
+      deferred.callback(content.asString());
+    }
+
+    @Override
+    public void failed(Exception e) {
+      LOG.error("Post Exception", e);
     }
     
-    /**
-     * Pushes a TSMeta object to the Elastic Search boxes over HTTP
-     * @param meta The meta data to publish
-     */
-    private void indexTSUID(final TSMeta meta) { 
-      final HttpPost request = new HttpPost("/" + index + "/" + 
-          tsmeta_type + "/" + meta.getTSUID() + "?replication=async");
-      try {
-        request.setEntity(new StringEntity(JSON.serializeToString(meta)));
-      } catch (UnsupportedEncodingException e) {
-        LOG.error("Encoding Error", e);
-      }
-      final String response = execute(request);
-      if (response == null) {
-        LOG.trace("Successfully indexed TSUID: " + meta);
-      } else {
-        LOG.error("Failed to indexed TSUID: " + meta + " with error: " + 
-            response);
-      }
-    }
-    
-    /**
-     * Deletes a TSMeta document from the search servers
-     * @param meta The meta data to delete
-     */
-    private void deleteTSUID(final String tsuid) {
-      final HttpDelete request = new HttpDelete("/" + index + "/" + 
-          tsmeta_type + "/" + tsuid + 
-          "?replication=async");
-      final String response = execute(request);
-      if (response == null) {
-        LOG.trace("Successfully deleted TSUID: " + tsuid);
-      } else {
-        LOG.error("Failed to delete TSUID: " + tsuid + " with error: " + 
-            response);
-      }
-    }
-    
-    /**
-     * Pushes a UIDMeta object to the Elastic Search boxes over HTTP
-     * @param meta The meta data to publish
-     */
-    private void indexUID(final UIDMeta meta) {
-      final HttpPost request = new HttpPost("/" + index + "/" + 
-          uidmeta_type + "/" + meta.getType().toString() + meta.getUID() + 
-          "?replication=async");
-      try {
-        request.setEntity(new StringEntity(JSON.serializeToString(meta)));
-      } catch (UnsupportedEncodingException e) {
-        LOG.error("Encoding Error", e);
-      }      
-      final String response = execute(request);
-      if (response == null) {
-        LOG.trace("Successfully indexed UID: " + meta);
-      } else {
-        LOG.error("Failed to index UID: " + meta + " with error: " + response);
-      }
-    }
-    
-    /**
-     * Deletes a UIDMeta document from the search servers
-     * @param meta The meta data to delete
-     */
-    private void deleteUID(final UIDMeta meta) {
-      final HttpDelete request = new HttpDelete("/" + index + "/" + 
-          uidmeta_type + "/" + meta.getType().toString() + meta.getUID() + 
-          "?replication=async");
-      final String response = execute(request);
-      if (response == null) {
-        LOG.trace("Successfully deleted UID: " + meta);
-      } else {
-        LOG.error("Failed to delete UID: " + meta + " with error: " + response);
-      }
-    }
-    
-    /**
-     * Pushes an annotation object to the Elastic Search boexes over HTTP
-     * @param note The annotation to index
-     */
-    private void indexAnnotation(final Annotation note) {
-      final HttpPost request = new HttpPost("/" + index + "/" + 
-          annotation_type + "/" + note.getStartTime() + 
-          note != null ? note.getTSUID() : "" + "?replication=async");
-      try {
-        request.setEntity(new StringEntity(JSON.serializeToString(note)));
-      } catch (UnsupportedEncodingException e) {
-        LOG.error("Encoding Error", e);
-      }      
-      final String response = execute(request);
-      if (response == null) {
-        LOG.trace("Successfully indexed annotation: " + note);
-      } else {
-        LOG.error("Failed to index annotation: " + note + " with error: " + 
-            response);
-      }
-    }
-    
-    /**
-     * Deletes an annotation document from the search servers
-     * @param note The annotation to delete
-     */
-    private void deleteAnnotation(final Annotation note) {
-      final HttpDelete request = new HttpDelete("/" + index + "/" + 
-          annotation_type + "/" +  note.getStartTime() + 
-          note != null ? note.getTSUID() : "" + "?replication=async");
-      final String response = execute(request);
-      if (response == null) {
-        LOG.trace("Successfully deleted annotation: " + note);
-      } else {
-        LOG.error("Failed to delete annotation: " + note + " with error: " + 
-            response);
-      }
-    }
-    
-    /**
-     * Executes an HTTP request against the ES servers and returns an error
-     * string if the request fails. 
-     * TODO need to parse the output, for now we're just dumping the full JSON
-     * response
-     * @param request The request to execute
-     * @return null if the request was successful, false if there was an error
-     */
-    private String execute(final HttpRequest request) {
-      try {
-        final HttpContext context = new BasicHttpContext();        
-        HttpResponse response = httpClient.execute(hosts, request, context);
-        HttpEntity entity = response.getEntity();
-        if (response.getStatusLine().getStatusCode() == 200 || 
-            response.getStatusLine().getStatusCode() == 201){
-          if (entity != null) {
-            EntityUtils.consume(entity);
-          }
-          return null;
-        } else {
-          String error = "[" + response.getStatusLine().getStatusCode() + "] ";
-          if (entity != null) {
-            error += EntityUtils.toString(entity);
-            EntityUtils.consume(entity);
-          } else {
-            error += "Unknown error occurred";
-          }
-          return error;
-        }
-      } catch (ClientProtocolException e) {
-        LOG.error("Protocol Error", e);
-      } catch (IOException e) {
-        LOG.error("Communications Error", e);
-      }
-      return "An exception was thrown";
-    }
   }
 
   final class SearchCB implements FutureCallback<Content> {
