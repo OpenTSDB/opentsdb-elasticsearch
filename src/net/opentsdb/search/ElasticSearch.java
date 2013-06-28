@@ -354,7 +354,7 @@ public final class ElasticSearch extends SearchPlugin {
 
     @Override
     public void completed(final Content content) {
-      deferred.callback(content.asString());
+      deferred.callback(true);
     }
 
     @Override
