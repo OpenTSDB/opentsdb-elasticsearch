@@ -47,6 +47,7 @@ import net.opentsdb.meta.Annotation;
 import net.opentsdb.meta.TSMeta;
 import net.opentsdb.meta.UIDMeta;
 import net.opentsdb.search.SearchQuery.SearchType;
+import net.opentsdb.stats.StatsCollector;
 import net.opentsdb.utils.JSON;
 
 import com.fasterxml.jackson.core.JsonParseException;
@@ -251,6 +252,13 @@ public final class ElasticSearch extends SearchPlugin {
   /** @return the version of this plugin */
   public String version() {
     return "2.0.0";
+  }
+
+  /**
+   * Called by the TSD when a request for statistics collection has come in.
+   * Method stubbed, no statistics are available
+   */
+  public void collectStats(final StatsCollector collector) {
   }
   
   /**
