@@ -16,10 +16,12 @@ Quick notes for getting up and running (Temporarily till I get a build setup):
 * Add "tsd.search.elasticsearch.hosts = <host>" to the config where host is single host or a semicoln delimited list of hosts.
 * Add a mapping for each JSON file in the ./scripts folder via:
   (NOTE: It's important to do this BEFORE starting a TSD that would index data as you can't modify the mappings for documents that have already been indexed [afaik])
-  
+
+```  
   curl -X PUT -d @scripts/tsmeta_mapping.json http://<eshost>/opentsdb/tsmeta/_mapping
   curl -X PUT -d @scripts/uidmeta_mapping.json http://<eshost>/opentsdb/uidmeta/_mapping
   curl -X PUT -d @scripts/annotation_mapping.json http://<eshost>/opentsdb/annotation/_mapping
+```
 
 * Optionally add "tsd.core.meta.enable_tracking = true" to your TSD config if it's processing incoming data
 * Turn up the TSD OR...
