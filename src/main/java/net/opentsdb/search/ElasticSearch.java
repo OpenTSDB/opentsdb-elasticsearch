@@ -12,22 +12,29 @@
 // see <http://www.gnu.org/licenses/>.
 package net.opentsdb.search;
 
-import httpfailover.FailoverHttpClient;
-
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-
 import org.apache.http.HttpHost;
-import org.apache.http.client.fluent.Async;
-import org.apache.http.client.fluent.Content;
-import org.apache.http.client.fluent.Request;
+import org.apache.http.HttpResponse;
+import org.apache.http.ParseException;
+import org.apache.http.client.config.RequestConfig;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.methods.HttpPost;
 import org.apache.http.concurrent.FutureCallback;
+import org.apache.http.config.ConnectionConfig;
+import org.apache.http.entity.ByteArrayEntity;
 import org.apache.http.impl.conn.PoolingClientConnectionManager;
+import org.apache.http.impl.nio.client.CloseableHttpAsyncClient;
+import org.apache.http.impl.nio.client.HttpAsyncClients;
+import org.apache.http.impl.nio.conn.PoolingNHttpClientConnectionManager;
+import org.apache.http.impl.nio.reactor.DefaultConnectingIOReactor;
+import org.apache.http.impl.nio.reactor.IOReactorConfig;
+import org.apache.http.nio.reactor.ConnectingIOReactor;
+import org.apache.http.nio.reactor.IOReactorException;
+import org.apache.http.util.EntityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -51,12 +58,9 @@ import com.stumbleupon.async.Deferred;
 
 public final class ElasticSearch extends SearchPlugin {
   private static final Logger LOG = LoggerFactory.getLogger(ElasticSearch.class);
-
-  private final ExecutorService threadpool = Executors.newFixedThreadPool(4);
-  private final Async async = Async.newInstance().use(threadpool);
-
+  
   private ImmutableList<HttpHost> hosts;
-  private FailoverHttpClient httpClient;
+  private CloseableHttpAsyncClient httpClient;
   private String index = "opentsdb";
   private String tsmeta_type = "tsmeta";
   private String uidmeta_type = "uidmeta";
@@ -90,15 +94,46 @@ public final class ElasticSearch extends SearchPlugin {
   public void initialize(final TSDB tsdb) {
     config = new ESPluginConfig(tsdb.getConfig());
     setConfiguration();
+    
+    final RequestConfig requestConfig = RequestConfig.custom()
+        .setConnectTimeout(500)
+        .setConnectionRequestTimeout(1000)
+        .setSocketTimeout(5000)
+        .build();
 
-    // setup a connection pool for reuse
-    PoolingClientConnectionManager http_pool =
-      new PoolingClientConnectionManager();
-    http_pool.setDefaultMaxPerRoute(
-        config.getInt("tsd.search.elasticsearch.pool.max_per_route"));
-    http_pool.setMaxTotal(
-        config.getInt("tsd.search.elasticsearch.pool.max_total"));
-    httpClient = new FailoverHttpClient(http_pool);
+    final ConnectionConfig connectionConfig = 
+        ConnectionConfig.custom().setBufferSize(8 * 1024)
+          .setFragmentSizeHint(8 * 1024).build();
+    
+    IOReactorConfig.Builder ioReactorConfigBuilder = IOReactorConfig.custom();
+    ioReactorConfigBuilder.setConnectTimeout(1000);
+    ioReactorConfigBuilder.setInterestOpQueued(false);
+    ioReactorConfigBuilder.setSelectInterval(100);
+    ioReactorConfigBuilder.setShutdownGracePeriod(500L);
+    ioReactorConfigBuilder.setSoKeepAlive(true);
+    ioReactorConfigBuilder.setSoLinger(-1);
+    ioReactorConfigBuilder.setSoReuseAddress(false);
+    ioReactorConfigBuilder.setSoTimeout(1000);
+    ioReactorConfigBuilder.setTcpNoDelay(false);
+
+    try {
+      final ConnectingIOReactor reactor = 
+          new DefaultConnectingIOReactor(ioReactorConfigBuilder.build());
+      PoolingNHttpClientConnectionManager connManager = 
+          new PoolingNHttpClientConnectionManager(reactor);
+      connManager.setMaxTotal(
+          config.getInt("tsd.search.elasticsearch.pool.max_total"));
+      connManager.setDefaultMaxPerRoute(
+          config.getInt("tsd.search.elasticsearch.pool.max_per_route"));
+      httpClient = HttpAsyncClients.custom().setDefaultRequestConfig(requestConfig)
+          .setDefaultConnectionConfig(connectionConfig)
+          .setConnectionManager(connManager)
+          .build();
+
+      httpClient.start();
+    } catch (IOReactorException e) {
+      throw new RuntimeException("Unable to create http client", e);
+    }
   }
 
   /**
@@ -114,11 +149,11 @@ public final class ElasticSearch extends SearchPlugin {
     uri.append("/").append(index).append("/").append(tsmeta_type).append("/");
     uri.append(meta.getTSUID()).append("?replication=async");
     
-    final Request post = Request.Post(uri.toString())
-      .bodyByteArray(TSMetaAugment.serializeToBytes(meta));
+    final HttpPost post = new HttpPost(uri.toString());
+    post.setEntity(new ByteArrayEntity(TSMetaAugment.serializeToBytes(meta)));
     
     final Deferred<Object> result = new Deferred<Object>();
-    async.execute(post, new AsyncCB(result));
+    httpClient.execute(post, new AsyncCB(result));
     return result;
   }
 
@@ -134,10 +169,10 @@ public final class ElasticSearch extends SearchPlugin {
     uri.append("/").append(index).append("/").append(tsmeta_type).append("/");
     uri.append(tsuid).append("?replication=async");
     
-    final Request delete = Request.Delete(uri.toString());
+    final HttpGet delete = new HttpGet(uri.toString());
     
     final Deferred<Object> result = new Deferred<Object>();
-    async.execute(delete, new AsyncCB(result));
+    httpClient.execute(delete, new AsyncCB(result));
     return result;
   }
 
@@ -155,11 +190,11 @@ public final class ElasticSearch extends SearchPlugin {
     uri.append(meta.getType().toString()).append(meta.getUID());
     uri.append("?replication=async");
     
-    final Request post = Request.Post(uri.toString())
-      .bodyByteArray(JSON.serializeToBytes(meta));
+    final HttpPost post = new HttpPost(uri.toString());
+    post.setEntity(new ByteArrayEntity(JSON.serializeToBytes(meta)));
     
     final Deferred<Object> result = new Deferred<Object>();
-    async.execute(post, new AsyncCB(result));
+    httpClient.execute(post, new AsyncCB(result));
     return result;
   }
 
@@ -176,10 +211,10 @@ public final class ElasticSearch extends SearchPlugin {
     uri.append(meta.getType().toString()).append(meta.getUID());
     uri.append("?replication=async");
     
-    final Request delete = Request.Delete(uri.toString());
+    final HttpGet delete = new HttpGet(uri.toString());
     
     final Deferred<Object> result = new Deferred<Object>();
-    async.execute(delete, new AsyncCB(result));
+    httpClient.execute(delete, new AsyncCB(result));
     return result;
   }
 
@@ -202,11 +237,11 @@ public final class ElasticSearch extends SearchPlugin {
     }
     uri.append("?replication=async");
     
-    final Request post = Request.Post(uri.toString())
-      .bodyByteArray(JSON.serializeToBytes(note));
+    final HttpPost post = new HttpPost(uri.toString());
+    post.setEntity(new ByteArrayEntity(JSON.serializeToBytes(note)));
     
     final Deferred<Object> result = new Deferred<Object>();
-    async.execute(post, new AsyncCB(result));
+    httpClient.execute(post, new AsyncCB(result));
     return result;
   }
 
@@ -228,10 +263,10 @@ public final class ElasticSearch extends SearchPlugin {
       annotationDeleted.increment();
     }
     
-    final Request delete = Request.Delete(uri.toString());
+    final HttpGet delete = new HttpGet(uri.toString());
     
     final Deferred<Object> result = new Deferred<Object>();
-    async.execute(delete, new AsyncCB(result));
+    httpClient.execute(delete, new AsyncCB(result));
     return result;
   }
 
@@ -267,11 +302,10 @@ public final class ElasticSearch extends SearchPlugin {
     query_string.put("query", query.getQuery());
     qs.put("query_string", query_string);
 
-    final Request request = Request.Post(uri.toString());
-    request.bodyByteArray(JSON.serializeToBytes(body));
+    final HttpPost post = new HttpPost(uri.toString());
+    post.setEntity(new ByteArrayEntity(JSON.serializeToBytes(body)));
 
-    final Async async = Async.newInstance().use(threadpool);
-    async.execute(request, new SearchCB(query, result));
+    httpClient.execute(post, new SearchCB(query, result));
     queriesExecuted.increment();
     return result;
   }
@@ -281,8 +315,12 @@ public final class ElasticSearch extends SearchPlugin {
    */
   @Override
   public Deferred<Object> shutdown() {
-    httpClient.getConnectionManager().shutdown();
-    return null;
+    try {
+      httpClient.close();
+      return Deferred.fromResult(null);
+    } catch (IOException e) {
+      return Deferred.fromError(e);
+    }
   }
 
   /** @return the version of this plugin */
@@ -362,7 +400,7 @@ public final class ElasticSearch extends SearchPlugin {
     }
   }
 
-  final class AsyncCB implements FutureCallback<Content> {
+  final class AsyncCB implements FutureCallback<HttpResponse> {
 
     final Deferred<Object> deferred;
 
@@ -376,7 +414,7 @@ public final class ElasticSearch extends SearchPlugin {
     }
 
     @Override
-    public void completed(final Content content) {
+    public void completed(final HttpResponse content) {
       deferred.callback(true);
     }
 
@@ -387,7 +425,7 @@ public final class ElasticSearch extends SearchPlugin {
 
   }
 
-  final class SearchCB implements FutureCallback<Content> {
+  final class SearchCB implements FutureCallback<HttpResponse> {
 
     final SearchQuery query;
     final Deferred<SearchQuery> result;
@@ -403,103 +441,110 @@ public final class ElasticSearch extends SearchPlugin {
     }
 
     @Override
-    public void completed(final Content content) {
-
-      final JsonParser jp = JSON.parseToStream(content.asStream());
-      if (jp == null) {
-        LOG.warn("Query response was null or empty");
-        result.callback(null);
-        return;
-      }
-
+    public void completed(final HttpResponse content) {
       try {
-        JsonToken next = jp.nextToken();
-        if (next != JsonToken.START_OBJECT) {
-          LOG.error("Error: root should be object: quiting.");
+        JsonParser jp = JSON.parseToStream(EntityUtils.toString(content.getEntity()));
+        if (jp == null) {
+          LOG.warn("Query response was null or empty");
           result.callback(null);
           return;
         }
-
-        final List<Object> objects = new ArrayList<Object>();
-
-        // loop through the JSON structure
-        String parent = "";
-        String last = "";
-
-        while (jp.nextToken() != null) {
-          String fieldName = jp.getCurrentName();
-          if (fieldName != null)
-            last = fieldName;
-
-          if (jp.getCurrentToken() == JsonToken.START_ARRAY ||
-              jp.getCurrentToken() == JsonToken.START_OBJECT)
-            parent = last;
-
-          if (fieldName != null && fieldName.equals("_source")) {
-            if (jp.nextToken() == JsonToken.START_OBJECT) {
-              // parse depending on type
-              switch (query.getType()) {
-                case TSMETA:
-                case TSMETA_SUMMARY:
-                case TSUIDS:
-                  final TSMeta meta = jp.readValueAs(TSMeta.class);
-                  if (query.getType() == SearchType.TSMETA) {
-                    objects.add(meta);
-                  } else if (query.getType() == SearchType.TSUIDS) {
-                    objects.add(meta.getTSUID());
-                  } else {
-                    final HashMap<String, Object> map =
-                      new HashMap<String, Object>(3);
-                    map.put("tsuid", meta.getTSUID());
-                    map.put("metric", meta.getMetric().getName());
-                    final HashMap<String, String> tags =
-                      new HashMap<String, String>(meta.getTags().size() / 2);
-                    int idx = 0;
-                    String name = "";
-                    for (final UIDMeta uid : meta.getTags()) {
-                      if (idx % 2 == 0) {
-                        name = uid.getName();
-                      } else {
-                        tags.put(name, uid.getName());
-                      }
-                      idx++;
-                    }
-                    map.put("tags", tags);
-                    objects.add(map);
-                  }
-                  break;
-                case UIDMETA:
-                  final UIDMeta uid = jp.readValueAs(UIDMeta.class);
-                  objects.add(uid);
-                  break;
-                case ANNOTATION:
-                  final Annotation note = jp.readValueAs(Annotation.class);
-                  objects.add(note);
-                  break;
-              }
-            }else
-              LOG.warn("Invalid _source value from ES, should have been a START_OBJECT");
-          } else if (fieldName != null && jp.getCurrentToken() != JsonToken.FIELD_NAME &&
-              parent.equals("hits") && fieldName.equals("total")){
-            LOG.trace("Total hits: [" + jp.getValueAsInt() + "]");
-            query.setTotalResults(jp.getValueAsInt());
-          } else if (fieldName != null && jp.getCurrentToken() != JsonToken.FIELD_NAME &&
-              fieldName.equals("took")){
-            LOG.trace("Time taken: [" + jp.getValueAsInt() + "]");
-            query.setTime(jp.getValueAsInt());
+  
+        try {
+          JsonToken next = jp.nextToken();
+          if (next != JsonToken.START_OBJECT) {
+            LOG.error("Error: root should be object: quiting.");
+            result.callback(null);
+            return;
           }
-
-          query.setResults(objects);
+  
+          final List<Object> objects = new ArrayList<Object>();
+  
+          // loop through the JSON structure
+          String parent = "";
+          String last = "";
+  
+          while (jp.nextToken() != null) {
+            String fieldName = jp.getCurrentName();
+            if (fieldName != null)
+              last = fieldName;
+  
+            if (jp.getCurrentToken() == JsonToken.START_ARRAY ||
+                jp.getCurrentToken() == JsonToken.START_OBJECT)
+              parent = last;
+  
+            if (fieldName != null && fieldName.equals("_source")) {
+              if (jp.nextToken() == JsonToken.START_OBJECT) {
+                // parse depending on type
+                switch (query.getType()) {
+                  case TSMETA:
+                  case TSMETA_SUMMARY:
+                  case TSUIDS:
+                    final TSMeta meta = jp.readValueAs(TSMeta.class);
+                    if (query.getType() == SearchType.TSMETA) {
+                      objects.add(meta);
+                    } else if (query.getType() == SearchType.TSUIDS) {
+                      objects.add(meta.getTSUID());
+                    } else {
+                      final HashMap<String, Object> map =
+                        new HashMap<String, Object>(3);
+                      map.put("tsuid", meta.getTSUID());
+                      map.put("metric", meta.getMetric().getName());
+                      final HashMap<String, String> tags =
+                        new HashMap<String, String>(meta.getTags().size() / 2);
+                      int idx = 0;
+                      String name = "";
+                      for (final UIDMeta uid : meta.getTags()) {
+                        if (idx % 2 == 0) {
+                          name = uid.getName();
+                        } else {
+                          tags.put(name, uid.getName());
+                        }
+                        idx++;
+                      }
+                      map.put("tags", tags);
+                      objects.add(map);
+                    }
+                    break;
+                  case UIDMETA:
+                    final UIDMeta uid = jp.readValueAs(UIDMeta.class);
+                    objects.add(uid);
+                    break;
+                  case ANNOTATION:
+                    final Annotation note = jp.readValueAs(Annotation.class);
+                    objects.add(note);
+                    break;
+                }
+              }else
+                LOG.warn("Invalid _source value from ES, should have been a START_OBJECT");
+            } else if (fieldName != null && jp.getCurrentToken() != JsonToken.FIELD_NAME &&
+                parent.equals("hits") && fieldName.equals("total")){
+              LOG.trace("Total hits: [" + jp.getValueAsInt() + "]");
+              query.setTotalResults(jp.getValueAsInt());
+            } else if (fieldName != null && jp.getCurrentToken() != JsonToken.FIELD_NAME &&
+                fieldName.equals("took")){
+              LOG.trace("Time taken: [" + jp.getValueAsInt() + "]");
+              query.setTime(jp.getValueAsInt());
+            }
+  
+            query.setResults(objects);
+          }
+  
+          result.callback(query);
+  
+        } catch (JsonParseException e) {
+          LOG.error("Query failed", e);
+          throw new RuntimeException(e);
+        } catch (IOException e) {
+          LOG.error("Query failed", e);
+          throw new RuntimeException(e);
         }
-
-        result.callback(query);
-
-      } catch (JsonParseException e) {
-        LOG.error("Query failed", e);
-        throw new RuntimeException(e);
-      } catch (IOException e) {
-        LOG.error("Query failed", e);
-        throw new RuntimeException(e);
+      } catch (ParseException e1) {
+        LOG.error("Query failed", e1);
+        throw new RuntimeException(e1);
+      } catch (IOException e1) {
+        LOG.error("Query failed", e1);
+        throw new RuntimeException(e1);
       }
     }
 

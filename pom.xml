@@ -4,7 +4,7 @@
     <name>otsdb-elasticsearch</name>
     <groupId>net.opentsdb</groupId>
     <artifactId>otsdb-elasticsearch</artifactId>
-    <version>1.1-SNAPSHOT</version>
+    <version>1.1.0-SNAPSHOT</version>
     <description>A search plugin for OpenTSDB that works with an Elastic Search cluster over HTTP.</description>
 
     <contributors>
@@ -18,45 +18,22 @@
         </contributor>
     </contributors>
 
-    <repositories>
-        <repository>
-            <id>mcaprari-releases</id>
-            <url>https://github.com/mcaprari/mcaprari-maven-repo/raw/master/releases</url>
-        </repository>
-        <repository>
-            <id>mcaprari-snapshots</id>
-            <url>https://github.com/mcaprari/mcaprari-maven-repo/raw/master/snapshots</url>
-        </repository>
-    </repositories>
-
     <dependencies>
         <dependency>
-            <groupId>org.apache.httpcomponents</groupId>
-            <artifactId>httpclient</artifactId>
-            <version>4.3.2</version>
+          <groupId>org.apache.httpcomponents</groupId>
+          <artifactId>httpclient</artifactId>
+          <version>4.5.3</version>
         </dependency>
-
         <dependency>
-            <groupId>org.apache.httpcomponents</groupId>
-            <artifactId>httpcore</artifactId>
-            <version>4.3.2</version>
-        </dependency>
-
-        <dependency>
-            <groupId>org.apache.httpcomponents</groupId>
-            <artifactId>fluent-hc</artifactId>
-            <version>4.3.5</version>
+          <groupId>org.apache.httpcomponents</groupId>
+          <artifactId>httpasyncclient</artifactId>
+          <version>4.1.1</version>
         </dependency>
 
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>jcl-over-slf4j</artifactId>
             <version>1.7.7</version>
-        </dependency>
-        <dependency>
-            <groupId>httpfailover</groupId>
-            <artifactId>httpclient-failover</artifactId>
-            <version>1.0</version>
         </dependency>
 
         <dependency>
