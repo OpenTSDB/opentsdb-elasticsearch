@@ -9,7 +9,7 @@
                 "properties": {
                     "name": {
                         "type": "string",
-                        "index": "not_analyzed"
+                        "analyzer": "metricname"
                     }
                 }
             },
@@ -21,9 +21,41 @@
                     },
                     "name": {
                         "type": "string",
-                        "index": "not_analyzed"
+                        "analyzer": "metricname"
                     }
                 }
+            },
+            "keys": {
+                "properties": {
+                    "uid": {
+                        "type": "string",
+                        "index": "not_analyzed"
+                    },
+                    "name": {
+                        "type": "string",
+                        "analyzer": "metricname"
+                    }
+                }
+            },
+            "values": {
+                "properties": {
+                    "uid": {
+                        "type": "string",
+                        "index": "not_analyzed"
+                    },
+                    "name": {
+                        "type": "string",
+                        "analyzer": "metricname"
+                    }
+                }
+            },
+            "kv_map": {
+                "type": "string",
+                "analyzer": "metricname"
+            },
+            "kv_map_name": {
+                "type": "string",
+                "analyzer": "metricname"
             }
         }
     }

@@ -15,6 +15,7 @@ package net.opentsdb.search;
 import httpfailover.FailoverHttpClient;
 
 import java.io.IOException;
+import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -38,13 +39,85 @@ import net.opentsdb.meta.UIDMeta;
 import net.opentsdb.search.SearchQuery.SearchType;
 import net.opentsdb.stats.StatsCollector;
 import net.opentsdb.utils.JSON;
+import net.opentsdb.uid.UniqueId.UniqueIdType;
 
 import com.fasterxml.jackson.core.JsonParseException;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonInclude.Include;
+import com.fasterxml.jackson.annotation.JsonAutoDetect;
+import com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableList.Builder;
 import com.stumbleupon.async.Deferred;
+
+/*
+ * Helper function to add data to the base TSMeta when it is serialized to JSON.
+ *
+ * This method adds keys, values, kv_map and kv_map_name to the generated JSON
+ * allowing for searches to find specific key/values by name/uid and to find
+ * TSUIDs with specific key=value.
+ *
+ * keys: Array of normal UIDMeta objects only containing TAGK
+ * values: Array of normal UIDMeta objects only containing TAGV
+ * kv_map: Array of strings in the form TAGK_UID=TAGV_UID
+ * kv_map_name: Array of strings in the form TAGK_keyname=TAGV_valuename
+ *
+ * Note: the tags object was not removed, this means keys/values is just
+ * duplicate data. For search purposes tags should probably be removed.
+ */
+class TSMetaAugment {
+  public static final byte[] serializeToBytes(final TSMeta meta) {
+    ArrayList<UIDMeta> keys = new ArrayList<UIDMeta>();
+    ArrayList<UIDMeta> values = new ArrayList<UIDMeta>();
+    ArrayList<String> kv_map = new ArrayList<String>();
+    ArrayList<String> kv_map_name = new ArrayList<String>();
+
+    String key = null;
+    String key_name = null;
+    String value = null;
+    String value_name = null;
+    for (UIDMeta m : meta.getTags()) {
+      if (m.getType() == UniqueIdType.TAGK) {
+        keys.add(m);
+        key = "TAGK_" + m.getUID();
+        key_name = "TAGK_" + m.getName();
+      } else if (m.getType() == UniqueIdType.TAGV) {
+        values.add(m);
+        value = "TAGV_" + m.getUID();
+        value_name = "TAGV_" + m.getName();
+      }
+
+      if (key != null && value != null) {
+        kv_map.add(key + "=" + value);
+        kv_map_name.add(key_name + "=" + value_name);
+        key_name = value_name = key = value = null;
+      }
+    }
+
+    ObjectMapper mapper = JSON.getMapper();
+    ObjectNode root = (ObjectNode) mapper.valueToTree(meta);
+
+    root.put("keys", mapper.valueToTree(keys));
+    root.put("values", mapper.valueToTree(values));
+    root.put("kv_map", mapper.valueToTree(kv_map));
+    root.put("kv_map_name", mapper.valueToTree(kv_map_name));
+
+    try {
+      ByteArrayOutputStream o = new ByteArrayOutputStream();
+      mapper.writeTree(mapper.getFactory().createGenerator(o), root);
+      return o.toByteArray();
+    } catch (IOException e) {
+      return new byte[0];
+    }
+  }
+}
 
 public final class ElasticSearch extends SearchPlugin {
   private static final Logger LOG = LoggerFactory.getLogger(ElasticSearch.class);
@@ -103,7 +176,7 @@ public final class ElasticSearch extends SearchPlugin {
     uri.append(meta.getTSUID()).append("?replication=async");
     
     final Request post = Request.Post(uri.toString())
-      .bodyByteArray(JSON.serializeToBytes(meta));
+      .bodyByteArray(TSMetaAugment.serializeToBytes(meta));
     
     final Deferred<Object> result = new Deferred<Object>();
     async.execute(post, new AsyncCB(result));
