@@ -96,6 +96,13 @@
       <sourceDirectory>src</sourceDirectory>
       <testSourceDirectory>test</testSourceDirectory>
 
+        <resources>
+            <resource>
+                <directory>src/META-INF/services</directory>
+                <targetPath>META-INF/services</targetPath>
+            </resource>
+        </resources>
+      
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

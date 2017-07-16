@@ -1,0 +1,13 @@
+{
+    "settings":{
+        "analysis": {
+            "analyzer": {
+                "metricname":{
+                    "type": "custom",
+                    "tokenizer": "keyword",
+                    "filter": [ "lowercase" ]
+                }
+            }
+        }
+    }
+}

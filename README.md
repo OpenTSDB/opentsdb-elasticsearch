@@ -18,6 +18,7 @@ Quick notes for getting up and running (Temporarily till I get a build setup):
   (NOTE: It's important to do this BEFORE starting a TSD that would index data as you can't modify the mappings for documents that have already been indexed [afaik])
 
 ```  
+  curl -X PUT -d @scripts/opentsdb_index.json http://<eshost>/opentsdb/
   curl -X PUT -d @scripts/tsmeta_mapping.json http://<eshost>/opentsdb/tsmeta/_mapping
   curl -X PUT -d @scripts/uidmeta_mapping.json http://<eshost>/opentsdb/uidmeta/_mapping
   curl -X PUT -d @scripts/annotation_mapping.json http://<eshost>/opentsdb/annotation/_mapping
