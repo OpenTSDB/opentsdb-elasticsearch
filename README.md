@@ -13,7 +13,7 @@ Quick notes for getting up and running (Temporarily till I get a build setup):
 * Add "tsd.core.plugin_path = <directory>" to your TSD config
 * Add "tsd.search.enable = true" to your TSD config
 * Add "tsd.search.plugin = net.opentsdb.search.ElasticSearch" 
-* Add "tsd.search.elasticsearch.hosts = <host>" to the config where host is single host or a semicoln delimited list of hosts.
+* Add "tsd.search.elasticsearch.host = <host>" The HTTP protocol, host and port for an ES host or VIP in the format ``http[s]://<host>[:port]``.
 * Add a mapping for each JSON file in the ./scripts folder via:
   (NOTE: It's important to do this BEFORE starting a TSD that would index data as you can't modify the mappings for documents that have already been indexed [afaik])
 

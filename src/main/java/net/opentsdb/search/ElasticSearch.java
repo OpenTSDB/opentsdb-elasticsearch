@@ -17,7 +17,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 
-import org.apache.http.HttpHost;
 import org.apache.http.HttpResponse;
 import org.apache.http.ParseException;
 import org.apache.http.client.config.RequestConfig;
@@ -26,7 +25,6 @@ import org.apache.http.client.methods.HttpPost;
 import org.apache.http.concurrent.FutureCallback;
 import org.apache.http.config.ConnectionConfig;
 import org.apache.http.entity.ByteArrayEntity;
-import org.apache.http.impl.conn.PoolingClientConnectionManager;
 import org.apache.http.impl.nio.client.CloseableHttpAsyncClient;
 import org.apache.http.impl.nio.client.HttpAsyncClients;
 import org.apache.http.impl.nio.conn.PoolingNHttpClientConnectionManager;
@@ -51,21 +49,20 @@ import org.hbase.async.Counter;
 import com.fasterxml.jackson.core.JsonParseException;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
-
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableList.Builder;
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Strings;
 import com.stumbleupon.async.Deferred;
 
 public final class ElasticSearch extends SearchPlugin {
   private static final Logger LOG = LoggerFactory.getLogger(ElasticSearch.class);
   
-  private ImmutableList<HttpHost> hosts;
   private CloseableHttpAsyncClient httpClient;
   private String index = "opentsdb";
   private String tsmeta_type = "tsmeta";
   private String uidmeta_type = "uidmeta";
   private String annotation_type = "annotation";
   private ESPluginConfig config = null;
+  private String host;
 
   private final Counter tsmetaAdded = new Counter();
   private final Counter tsmetaDeleted = new Counter();
@@ -93,8 +90,34 @@ public final class ElasticSearch extends SearchPlugin {
   @Override
   public void initialize(final TSDB tsdb) {
     config = new ESPluginConfig(tsdb.getConfig());
-    setConfiguration();
     
+    host = config.getString("tsd.search.elasticsearch.host");
+    if (Strings.isNullOrEmpty(host)) {
+      throw new IllegalArgumentException(
+          "Missing config 'tsd.search.elasticsearch.host'");
+    }
+    if (!host.toLowerCase().startsWith("http")) {
+      host = "http://" + host;
+    }
+
+    // set index/types
+    index = config.getString("tsd.search.elasticsearch.index");
+    if (Strings.isNullOrEmpty(index)) {
+      throw new IllegalArgumentException("Missing config "
+          + "'tsd.search.elasticsearch.index'");
+    }
+    tsmeta_type = config.getString("tsd.search.elasticsearch.tsmeta_type");
+    if (Strings.isNullOrEmpty(tsmeta_type)) {
+      throw new IllegalArgumentException("Missing config "
+          + "'tsd.search.elasticsearch.tsmeta_type'");
+    }
+    uidmeta_type = config.getString("tsd.search.elasticsearch.uidmeta_type");
+    if (Strings.isNullOrEmpty(uidmeta_type)) {
+      throw new IllegalArgumentException("Missing config "
+          + "'tsd.search.elasticsearch.uidmeta_type'");
+    }
+    
+    // TODO - configs for all these params
     final RequestConfig requestConfig = RequestConfig.custom()
         .setConnectTimeout(500)
         .setConnectionRequestTimeout(1000)
@@ -119,7 +142,7 @@ public final class ElasticSearch extends SearchPlugin {
     try {
       final ConnectingIOReactor reactor = 
           new DefaultConnectingIOReactor(ioReactorConfigBuilder.build());
-      PoolingNHttpClientConnectionManager connManager = 
+      final PoolingNHttpClientConnectionManager connManager = 
           new PoolingNHttpClientConnectionManager(reactor);
       connManager.setMaxTotal(
           config.getInt("tsd.search.elasticsearch.pool.max_total"));
@@ -144,8 +167,7 @@ public final class ElasticSearch extends SearchPlugin {
   @Override
   public Deferred<Object> indexTSMeta(final TSMeta meta) {
     tsmetaAdded.increment();
-    final StringBuilder uri = new StringBuilder("http://");
-    uri.append(hosts.get(0).toHostString());
+    final StringBuilder uri = new StringBuilder(host);
     uri.append("/").append(index).append("/").append(tsmeta_type).append("/");
     uri.append(meta.getTSUID()).append("?replication=async");
     
@@ -164,8 +186,7 @@ public final class ElasticSearch extends SearchPlugin {
    */
   public Deferred<Object> deleteTSMeta(final String tsuid) {
     tsmetaDeleted.increment();
-    final StringBuilder uri = new StringBuilder("http://");
-    uri.append(hosts.get(0).toHostString());
+    final StringBuilder uri = new StringBuilder(host);
     uri.append("/").append(index).append("/").append(tsmeta_type).append("/");
     uri.append(tsuid).append("?replication=async");
     
@@ -184,8 +205,7 @@ public final class ElasticSearch extends SearchPlugin {
   @Override
   public Deferred<Object> indexUIDMeta(final UIDMeta meta) {
     uidAdded.increment();
-    final StringBuilder uri = new StringBuilder("http://");
-    uri.append(hosts.get(0).toHostString());
+    final StringBuilder uri = new StringBuilder(host);
     uri.append("/").append(index).append("/").append(uidmeta_type).append("/");
     uri.append(meta.getType().toString()).append(meta.getUID());
     uri.append("?replication=async");
@@ -205,8 +225,7 @@ public final class ElasticSearch extends SearchPlugin {
    */
   public Deferred<Object> deleteUIDMeta(final UIDMeta meta) {
     uidDeleted.increment();
-    final StringBuilder uri = new StringBuilder("http://");
-    uri.append(hosts.get(0).toHostString());
+    final StringBuilder uri = new StringBuilder(host);
     uri.append("/").append(index).append("/").append(tsmeta_type).append("/");
     uri.append(meta.getType().toString()).append(meta.getUID());
     uri.append("?replication=async");
@@ -227,8 +246,7 @@ public final class ElasticSearch extends SearchPlugin {
    * (think of it as {@code Deferred<Void>}).
    */
   public Deferred<Object> indexAnnotation(final Annotation note) {
-    final StringBuilder uri = new StringBuilder("http://");
-    uri.append(hosts.get(0).toHostString());
+    final StringBuilder uri = new StringBuilder(host);
     uri.append("/").append(index).append("/").append(annotation_type).append("/");
     uri.append(note.getStartTime());
     if (note != null ) {
@@ -254,8 +272,7 @@ public final class ElasticSearch extends SearchPlugin {
    * (think of it as {@code Deferred<Void>}).
    */
   public Deferred<Object> deleteAnnotation(final Annotation note) {
-    final StringBuilder uri = new StringBuilder("http://");
-    uri.append(hosts.get(0).toHostString());
+    final StringBuilder uri = new StringBuilder(host);
     uri.append("/").append(index).append("/").append(annotation_type).append("/");
     uri.append(note.getStartTime());
     if (note != null ) {
@@ -273,8 +290,7 @@ public final class ElasticSearch extends SearchPlugin {
   public Deferred<SearchQuery> executeQuery(final SearchQuery query) {
     final Deferred<SearchQuery> result = new Deferred<SearchQuery>();
 
-    final StringBuilder uri = new StringBuilder("http://");
-    uri.append(hosts.get(0).toHostString());
+    final StringBuilder uri = new StringBuilder(host);
     uri.append("/").append(index).append("/");
     switch(query.getType()) {
       case TSMETA:
@@ -336,70 +352,7 @@ public final class ElasticSearch extends SearchPlugin {
     collector.record("search.uid_deleted", uidDeleted.get());
     collector.record("search.queries_executed", queriesExecuted.get());
   }
-
-  /**
-   * Parses semicoln separated hosts from a config line into a host list. If
-   * a given host includes a port, e.g. "host:port", the port will be parsed,
-   * otherwise port 9200 will be used.
-   * @param config The config line to parse
-   * @throws IllegalArgumentException if the line was empty or no hosts were
-   * parsed
-   * @throws NumberFormatException if a parsed port can't be converted to an
-   * integer
-   */
-  private void setHosts(final String config) {
-    if (config == null || config.isEmpty()) {
-      throw new IllegalArgumentException("The hosts config was empty");
-    }
-
-    Builder<HttpHost> host_list = ImmutableList.<HttpHost>builder();
-    String[] split_hosts = config.split(";");
-    for (String host : split_hosts) {
-      String[] host_split = host.split(":");
-      int port = 9200;
-      if (host_split.length > 1) {
-        port = Integer.parseInt(host_split[1]);
-      }
-      host_list.add(new HttpHost(host_split[0], port));
-    }
-    this.hosts = host_list.build();
-    if (this.hosts.size() < 1) {
-      throw new IllegalArgumentException(
-          "No hosts were found to load into the list");
-    }
-  }
-
-  /**
-   * Helper that loads config settings and throws exceptions if something is
-   * amiss.
-   * @throws IllegalArgumentException if a config value is invalid
-   * @throws NumberFormatException if a config value is invalid
-   */
-  private void setConfiguration() {
-    final String host_config =
-      config.getString("tsd.search.elasticsearch.hosts");
-    if (host_config == null || host_config.isEmpty()) {
-      throw new IllegalArgumentException("Missing search hosts configuration");
-    }
-    setHosts(host_config);
-
-    // set index/types
-    index = config.getString("tsd.search.elasticsearch.index");
-    if (index == null || index.isEmpty()) {
-      throw new IllegalArgumentException("Invalid index configuration value");
-    }
-    tsmeta_type = config.getString("tsd.search.elasticsearch.tsmeta_type");
-    if (tsmeta_type == null || tsmeta_type.isEmpty()) {
-      throw new IllegalArgumentException(
-          "Invalid tsmeta_type configuration value");
-    }
-    uidmeta_type = config.getString("tsd.search.elasticsearch.uidmeta_type");
-    if (uidmeta_type == null || uidmeta_type.isEmpty()) {
-      throw new IllegalArgumentException(
-          "Invalid uidmeta_type configuration value");
-    }
-  }
-
+  
   final class AsyncCB implements FutureCallback<HttpResponse> {
 
     final Deferred<Object> deferred;
@@ -553,5 +506,15 @@ public final class ElasticSearch extends SearchPlugin {
       LOG.error("Query failed", e);
       throw new RuntimeException(e);
     }
+  }
+
+  @VisibleForTesting
+  public String host() {
+    return host;
+  }
+
+  @VisibleForTesting
+  public ESPluginConfig config() {
+    return config;
   }
 }
