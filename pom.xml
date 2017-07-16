@@ -4,7 +4,7 @@
     <name>otsdb-elasticsearch</name>
     <groupId>net.opentsdb</groupId>
     <artifactId>otsdb-elasticsearch</artifactId>
-    <version>1.0</version>
+    <version>1.1-SNAPSHOT</version>
     <description>A search plugin for OpenTSDB that works with an Elastic Search cluster over HTTP.</description>
 
     <contributors>
