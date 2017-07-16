@@ -1,19 +1,25 @@
-OTSDBElasticSearch
-==================
+       ___                 _____ ____  ____  ____
+      / _ \ _ __   ___ _ _|_   _/ ___||  _ \| __ )
+     | | | | '_ \ / _ \ '_ \| | \___ \| | | |  _ \
+     | |_| | |_) |  __/ | | | |  ___) | |_| | |_) |
+      \___/| .__/ \___|_| |_|_| |____/|____/|____/
+           |_|    The modern time series database.
 
+
+[![Build Status](https://travis-ci.org/opentsdb/opentsdb-elasticsearch.svg?branch=next)](https://travis-ci.org/opentsdb/opentsdb-elasticsearch) [![Coverage Status](https://coveralls.io/repos/github/OpenTSDB/opentsdb-elasticsearch/badge.svg?branch=next)](https://coveralls.io/github/OpenTSDB/opentsdb-elasticsearch?branch=next)
+ 
 Search plugin for OpenTSDB
 
-Quick notes for getting up and running (Temporarily till I get a build setup):
+##Installation
 
-* Download the HttpComponents client version 4.2 or later
-* Download https://github.com/mcaprari/httpclient-failover and compile
-* Compile OpenTSDB 2.0 (the "next" branch from Github) to get the jar
-* Compile the ES plugin however you like, be sure to include the manifest in the .jar. The included POM.xml *should* work
+* Compile the plugin via ``mvn package``.
 * Create a plugins directory for your TSD
-* Add "tsd.core.plugin_path = <directory>" to your TSD config
-* Add "tsd.search.enable = true" to your TSD config
-* Add "tsd.search.plugin = net.opentsdb.search.ElasticSearch" 
-* Add "tsd.search.elasticsearch.host = <host>" The HTTP protocol, host and port for an ES host or VIP in the format ``http[s]://<host>[:port]``.
+* Copy the plugin from the ``target`` directory into your TSD's plugin's directory.
+* Add the following configs to your ``opentsdb.conf`` file.
+    * Add ``tsd.core.plugin_path = <directory>`` pointing to a valid directory for your plugins.
+    * Add ``tsd.search.enable = true``
+    * Add ``tsd.search.plugin = net.opentsdb.search.ElasticSearch`` 
+    * Add ``tsd.search.elasticsearch.host = <host>`` The HTTP protocol, host and port for an ES host or VIP in the format ``http[s]://<host>[:port]``.
 * Add a mapping for each JSON file in the ./scripts folder via:
   (NOTE: It's important to do this BEFORE starting a TSD that would index data as you can't modify the mappings for documents that have already been indexed [afaik])
 
@@ -24,6 +30,6 @@ Quick notes for getting up and running (Temporarily till I get a build setup):
   curl -X PUT -d @scripts/annotation_mapping.json http://<eshost>/opentsdb/annotation/_mapping
 ```
 
-* Optionally add "tsd.core.meta.enable_tracking = true" to your TSD config if it's processing incoming data
+* Optionally add ``tsd.core.meta.enable_tracking = true`` to your TSD config if it's processing incoming data
 * Turn up the TSD OR...
-* ... if you have existing data, run the "uid metasync" utility from OpenTSDB
+* ... if you have existing data, run the ``uid metasync`` utility from OpenTSDB
