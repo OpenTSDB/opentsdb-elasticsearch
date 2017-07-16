@@ -1,11 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-    <name>otsdb-elasticsearch</name>
+    <name>opentsdb-elasticsearch</name>
     <groupId>net.opentsdb</groupId>
-    <artifactId>otsdb-elasticsearch</artifactId>
+    <artifactId>opentsdb-elasticsearch</artifactId>
     <version>1.1.0-SNAPSHOT</version>
-    <description>A search plugin for OpenTSDB that works with an Elastic Search cluster over HTTP.</description>
+    <description>A search plugin for OpenTSDB that works with an Elastic 
+      Search cluster.</description>
+
+    <packaging>jar</packaging>
 
     <contributors>
         <contributor>
@@ -42,6 +45,7 @@
             <version>2.2.0</version>
         </dependency>
 
+        <!-- test dependencies -->
         <dependency>
           <groupId>com.google.guava</groupId>
           <artifactId>guava</artifactId>
@@ -65,34 +69,32 @@
           <artifactId>jackson-databind</artifactId>
           <version>2.3.3</version>
         </dependency>
+
+        <dependency>
+          <groupId>org.javassist</groupId>
+          <artifactId>javassist</artifactId>
+          <version>3.18.1-GA</version>
+          <scope>test</scope>
+        </dependency>
+
+        <dependency>
+          <groupId>junit</groupId>
+          <artifactId>junit</artifactId>
+          <version>4.11</version>
+          <scope>test</scope>
+        </dependency>
+
+        <dependency>
+          <groupId>org.mockito</groupId>
+          <artifactId>mockito-core</artifactId>
+          <version>1.9.5</version>
+          <scope>test</scope>
+        </dependency>
+        
     </dependencies>
 
-    <packaging>jar</packaging>
-
     <build>
-      <sourceDirectory>src</sourceDirectory>
-      <testSourceDirectory>test</testSourceDirectory>
-
-        <resources>
-            <resource>
-                <directory>src/META-INF/services</directory>
-                <targetPath>META-INF/services</targetPath>
-            </resource>
-        </resources>
-      
         <plugins>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-source-plugin</artifactId>
-                <executions>
-                    <execution>
-                        <id>attach-sources</id>
-                        <goals>
-                            <goal>jar</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
@@ -162,6 +164,35 @@
                     </execution>
                 </executions>
             </plugin>
+            
+            <!-- Coveralls plugins -->
+            <plugin>
+              <groupId>org.codehaus.mojo</groupId>
+              <artifactId>cobertura-maven-plugin</artifactId>
+              <version>2.7</version>
+             <configuration>
+                <format>xml</format>
+                <maxmem>256m</maxmem>
+                <!-- aggregated reports for multi-module projects -->
+                <aggregate>true</aggregate>
+             </configuration>
+           </plugin>
+
+            <plugin>
+              <groupId>org.eluder.coveralls</groupId>
+              <artifactId>coveralls-maven-plugin</artifactId>
+              <version>4.3.0</version>
+              <configuration>
+                <repoToken>${repoToken}</repoToken>
+             </configuration>
+           </plugin>
+           
         </plugins>
     </build>
+    
+    <parent>
+      <groupId>org.sonatype.oss</groupId>
+      <artifactId>oss-parent</artifactId>
+      <version>7</version>
+     </parent>
 </project>
