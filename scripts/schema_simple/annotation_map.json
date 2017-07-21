@@ -1,0 +1,10 @@
+{
+    "annotation": {
+        "properties": {
+            "tsuid": {
+                "type": "string",
+                "index": "not_analyzed"
+            }
+        }
+    }
+}

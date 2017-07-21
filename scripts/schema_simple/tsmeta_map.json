@@ -1,0 +1,30 @@
+{
+    "tsmeta": {
+        "properties": {
+            "tsuid": {
+                "type": "string",
+                "index": "not_analyzed"
+            },
+            "metric": {
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "index": "not_analyzed"
+                    }
+                }
+            },
+            "tags": {
+                "properties": {
+                    "uid": {
+                        "type": "string",
+                        "index": "not_analyzed"
+                    },
+                    "name": {
+                        "type": "string",
+                        "index": "not_analyzed"
+                    }
+                }
+            }
+        }
+    }
+}
