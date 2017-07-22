@@ -20,16 +20,20 @@ Search plugin for OpenTSDB
     * Add ``tsd.search.enable = true``
     * Add ``tsd.search.plugin = net.opentsdb.search.ElasticSearch`` 
     * Add ``tsd.search.elasticsearch.host = <host>`` The HTTP protocol, host and port for an ES host or VIP in the format ``http[s]://<host>[:port]``.
-* Add a mapping for each JSON file in the ./scripts folder via:
+* Add a mapping for each JSON file in the ``./schemas`` sub folder of your choice via:
   (NOTE: It's important to do this BEFORE starting a TSD that would index data as you can't modify the mappings for documents that have already been indexed [afaik])
 
 ```  
-  curl -X PUT -d @scripts/opentsdb_index.json http://<eshost>/opentsdb/
-  curl -X PUT -d @scripts/tsmeta_mapping.json http://<eshost>/opentsdb/tsmeta/_mapping
-  curl -X PUT -d @scripts/uidmeta_mapping.json http://<eshost>/opentsdb/uidmeta/_mapping
-  curl -X PUT -d @scripts/annotation_mapping.json http://<eshost>/opentsdb/annotation/_mapping
+  curl -X PUT -d @schemas/simple/opentsdb_index.json http://<eshost>/opentsdb/
+  curl -X PUT -d @schemas/simple/tsmeta_mapping.json http://<eshost>/opentsdb/tsmeta/_mapping
+  curl -X PUT -d @schemas/simple/uidmeta_mapping.json http://<eshost>/opentsdb/uidmeta/_mapping
+  curl -X PUT -d @schemas/simple/annotation_mapping.json http://<eshost>/opentsdb/annotation/_mapping
 ```
 
 * Optionally add ``tsd.core.meta.enable_tracking = true`` to your TSD config if it's processing incoming data
 * Turn up the TSD OR...
 * ... if you have existing data, run the ``uid metasync`` utility from OpenTSDB
+
+## Schemas
+
+TODO - doc em

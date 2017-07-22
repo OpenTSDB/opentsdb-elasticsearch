@@ -43,6 +43,13 @@ public final class ESPluginConfig extends Config {
     default_map.put("tsd.search.elasticsearch.annotation_type", "annotation");
     default_map.put("tsd.search.elasticsearch.pool.max_per_route", "25");
     default_map.put("tsd.search.elasticsearch.pool.max_total", "50");
+    
+    default_map.put("tsd.search.elasticsearch.schema.tsmeta", 
+        "net.opentsdb.search.schemas.tsmeta.DefaultTSMetaSchema");
+    default_map.put("tsd.search.elasticsearch.schema.uidmeta", 
+        "net.opentsdb.search.schemas.uidmeta.DefaultUIDMetaSchema");
+    default_map.put("tsd.search.elasticsearch.schema.annotation", 
+        "net.opentsdb.search.schemas.annotation.DefaultAnnotationSchema");
 
     for (Map.Entry<String, String> entry : default_map.entrySet()) {
       if (!properties.containsKey(entry.getKey()))

@@ -13,6 +13,8 @@
 package net.opentsdb.search;
 
 import java.io.IOException;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -20,7 +22,6 @@ import java.util.List;
 import org.apache.http.HttpResponse;
 import org.apache.http.ParseException;
 import org.apache.http.client.config.RequestConfig;
-import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.concurrent.FutureCallback;
 import org.apache.http.config.ConnectionConfig;
@@ -42,6 +43,9 @@ import net.opentsdb.meta.Annotation;
 import net.opentsdb.meta.TSMeta;
 import net.opentsdb.meta.UIDMeta;
 import net.opentsdb.search.SearchQuery.SearchType;
+import net.opentsdb.search.schemas.annotation.AnnotationSchema;
+import net.opentsdb.search.schemas.tsmeta.TSMetaSchema;
+import net.opentsdb.search.schemas.uidmeta.UIDMetaSchema;
 import net.opentsdb.utils.JSON;
 
 import org.hbase.async.Counter;
@@ -49,28 +53,22 @@ import org.hbase.async.Counter;
 import com.fasterxml.jackson.core.JsonParseException;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
-import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Strings;
 import com.stumbleupon.async.Deferred;
 
 public final class ElasticSearch extends SearchPlugin {
   private static final Logger LOG = LoggerFactory.getLogger(ElasticSearch.class);
   
-  private CloseableHttpAsyncClient httpClient;
+  private CloseableHttpAsyncClient http_client;
   private String index = "opentsdb";
-  private String tsmeta_type = "tsmeta";
-  private String uidmeta_type = "uidmeta";
-  private String annotation_type = "annotation";
+  private boolean async_replication;
   private ESPluginConfig config = null;
   private String host;
-
-  private final Counter tsmetaAdded = new Counter();
-  private final Counter tsmetaDeleted = new Counter();
-  private final Counter uidAdded = new Counter();
-  private final Counter uidDeleted = new Counter();
-  private final Counter annotationAdded = new Counter();
-  private final Counter annotationDeleted = new Counter();
-  private final Counter queriesExecuted = new Counter();
+  private TSMetaSchema ts_meta_schema;
+  private UIDMetaSchema uid_meta_schema;
+  private AnnotationSchema annotation_schema;
+  
+  final Counter queries_executed = new Counter();
 
   /**
    * Default constructor
@@ -83,7 +81,6 @@ public final class ElasticSearch extends SearchPlugin {
    * Initializes the search plugin, setting up the HTTP client pool and config
    * options.
    * @param tsdb The TSDB to which we belong
-   * @return null if successful, otherwise it throws an exception
    * @throws IllegalArgumentException if a config value is invalid
    * @throws NumberFormatException if a config value is invalid
    */
@@ -105,16 +102,6 @@ public final class ElasticSearch extends SearchPlugin {
     if (Strings.isNullOrEmpty(index)) {
       throw new IllegalArgumentException("Missing config "
           + "'tsd.search.elasticsearch.index'");
-    }
-    tsmeta_type = config.getString("tsd.search.elasticsearch.tsmeta_type");
-    if (Strings.isNullOrEmpty(tsmeta_type)) {
-      throw new IllegalArgumentException("Missing config "
-          + "'tsd.search.elasticsearch.tsmeta_type'");
-    }
-    uidmeta_type = config.getString("tsd.search.elasticsearch.uidmeta_type");
-    if (Strings.isNullOrEmpty(uidmeta_type)) {
-      throw new IllegalArgumentException("Missing config "
-          + "'tsd.search.elasticsearch.uidmeta_type'");
     }
     
     // TODO - configs for all these params
@@ -148,145 +135,161 @@ public final class ElasticSearch extends SearchPlugin {
           config.getInt("tsd.search.elasticsearch.pool.max_total"));
       connManager.setDefaultMaxPerRoute(
           config.getInt("tsd.search.elasticsearch.pool.max_per_route"));
-      httpClient = HttpAsyncClients.custom().setDefaultRequestConfig(requestConfig)
+      http_client = HttpAsyncClients.custom().setDefaultRequestConfig(requestConfig)
           .setDefaultConnectionConfig(connectionConfig)
           .setConnectionManager(connManager)
           .build();
 
-      httpClient.start();
+      http_client.start();
     } catch (IOReactorException e) {
       throw new RuntimeException("Unable to create http client", e);
     }
+    
+    String schema = config.getString("tsd.search.elasticsearch.schema.tsmeta");
+    if (Strings.isNullOrEmpty(schema)) {
+      LOG.info("Disabling TSMeta schema.");
+      ts_meta_schema = null;
+    } else {
+      try {
+        final Class<?> clazz = Class.forName(schema);
+        final Constructor<?> ctor = clazz.getConstructor(ElasticSearch.class);
+        ts_meta_schema = (TSMetaSchema) ctor.newInstance(this);
+      } catch (ClassNotFoundException e) {
+        throw new IllegalArgumentException("No TSMeta schema class found "
+            + "for: " + schema);
+      } catch (NoSuchMethodException e) {
+        throw new IllegalArgumentException("TSMeta schema did not implement "
+            + "the proper constructor. " + schema);
+      } catch (SecurityException e) {
+        throw new IllegalArgumentException("Unexpected security exception "
+            + "loading TSMeta schema: " + schema, e);
+      } catch (InstantiationException e) {
+        throw new IllegalArgumentException("Unexpected exception instantiating "
+            + "TSMeta schema: " + schema, e);
+      } catch (IllegalAccessException e) {
+        throw new IllegalArgumentException("Unexpected exception instantiating "
+            + "TSMeta schema: " + schema, e);
+      } catch (IllegalArgumentException e) {
+        throw e;
+      } catch (InvocationTargetException e) {
+        throw new IllegalArgumentException("Unexpected exception instantiating "
+            + "TSMeta schema: " + schema, e);
+      }
+    }
+    
+    schema = config.getString("tsd.search.elasticsearch.schema.uidmeta");
+    if (Strings.isNullOrEmpty(schema)) {
+      LOG.info("Disabling UIDMeta schema.");
+      uid_meta_schema = null;
+    } else {
+      try {
+        final Class<?> clazz = Class.forName(schema);
+        final Constructor<?> ctor = clazz.getConstructor(ElasticSearch.class);
+        uid_meta_schema = (UIDMetaSchema) ctor.newInstance(this);
+      } catch (ClassNotFoundException e) {
+        throw new IllegalArgumentException("No UIDMeta schema class found "
+            + "for: " + schema);
+      } catch (NoSuchMethodException e) {
+        throw new IllegalArgumentException("UIDMeta schema did not implement "
+            + "the proper constructor. " + schema);
+      } catch (SecurityException e) {
+        throw new IllegalArgumentException("Unexpected security exception "
+            + "loading UIDMeta schema: " + schema, e);
+      } catch (InstantiationException e) {
+        throw new IllegalArgumentException("Unexpected exception instantiating "
+            + "UIDMeta schema: " + schema, e);
+      } catch (IllegalAccessException e) {
+        throw new IllegalArgumentException("Unexpected exception instantiating "
+            + "UIDMeta schema: " + schema, e);
+      } catch (IllegalArgumentException e) {
+        throw e;
+      } catch (InvocationTargetException e) {
+        throw new IllegalArgumentException("Unexpected exception instantiating "
+            + "UIDMeta schema: " + schema, e);
+      }
+    }
+    
+    schema = config.getString("tsd.search.elasticsearch.schema.annotation");
+    if (Strings.isNullOrEmpty(schema)) {
+      LOG.info("Disabling Annotation schema.");
+      annotation_schema = null;
+    } else {
+      try {
+        final Class<?> clazz = Class.forName(schema);
+        final Constructor<?> ctor = clazz.getConstructor(ElasticSearch.class);
+        annotation_schema = (AnnotationSchema) ctor.newInstance(this);
+      } catch (ClassNotFoundException e) {
+        throw new IllegalArgumentException("No Annotation schema class found "
+            + "for: " + schema);
+      } catch (NoSuchMethodException e) {
+        throw new IllegalArgumentException("Annotation schema did not implement "
+            + "the proper constructor. " + schema);
+      } catch (SecurityException e) {
+        throw new IllegalArgumentException("Unexpected security exception "
+            + "loading Annotation schema: " + schema, e);
+      } catch (InstantiationException e) {
+        throw new IllegalArgumentException("Unexpected exception instantiating "
+            + "Annotation schema: " + schema, e);
+      } catch (IllegalAccessException e) {
+        throw new IllegalArgumentException("Unexpected exception instantiating "
+            + "Annotation schema: " + schema, e);
+      } catch (IllegalArgumentException e) {
+        throw e;
+      } catch (InvocationTargetException e) {
+        throw new IllegalArgumentException("Unexpected exception instantiating "
+            + "Annotation schema: " + schema, e);
+      }
+    }
   }
-
-  /**
-   * Queues the given TSMeta object for indexing
-   * @param meta The meta data object to index
-   * @return null
-   */
+  
   @Override
   public Deferred<Object> indexTSMeta(final TSMeta meta) {
-    tsmetaAdded.increment();
-    final StringBuilder uri = new StringBuilder(host);
-    uri.append("/").append(index).append("/").append(tsmeta_type).append("/");
-    uri.append(meta.getTSUID()).append("?replication=async");
-    
-    final HttpPost post = new HttpPost(uri.toString());
-    post.setEntity(new ByteArrayEntity(TSMetaAugment.serializeToBytes(meta)));
-    
-    final Deferred<Object> result = new Deferred<Object>();
-    httpClient.execute(post, new AsyncCB(result));
-    return result;
+    if (ts_meta_schema != null) {
+      return ts_meta_schema.index(meta);
+    }
+    return Deferred.<Object>fromResult(false);
   }
-
-  /**
-   * Queues the given TSMeta object for deletion
-   * @param meta The meta data object to delete
-   * @return null
-   */
+  
   public Deferred<Object> deleteTSMeta(final String tsuid) {
-    tsmetaDeleted.increment();
-    final StringBuilder uri = new StringBuilder(host);
-    uri.append("/").append(index).append("/").append(tsmeta_type).append("/");
-    uri.append(tsuid).append("?replication=async");
-    
-    final HttpGet delete = new HttpGet(uri.toString());
-    
-    final Deferred<Object> result = new Deferred<Object>();
-    httpClient.execute(delete, new AsyncCB(result));
-    return result;
+    if (ts_meta_schema != null) {
+      return ts_meta_schema.delete(tsuid);
+    }
+    return Deferred.<Object>fromResult(false);
   }
-
-  /**
-   * Queues the given UIDMeta object for indexing
-   * @param meta The meta data object to index
-   * @return null
-   */
+  
   @Override
   public Deferred<Object> indexUIDMeta(final UIDMeta meta) {
-    uidAdded.increment();
-    final StringBuilder uri = new StringBuilder(host);
-    uri.append("/").append(index).append("/").append(uidmeta_type).append("/");
-    uri.append(meta.getType().toString()).append(meta.getUID());
-    uri.append("?replication=async");
-    
-    final HttpPost post = new HttpPost(uri.toString());
-    post.setEntity(new ByteArrayEntity(JSON.serializeToBytes(meta)));
-    
-    final Deferred<Object> result = new Deferred<Object>();
-    httpClient.execute(post, new AsyncCB(result));
-    return result;
+    if (uid_meta_schema != null) {
+      return uid_meta_schema.index(meta);
+    }
+    return Deferred.<Object>fromResult(false);
   }
 
-  /**
-   * Queues the given UIDMeta object for deletion
-   * @param meta The meta data object to delete
-   * @return null
-   */
+  @Override
   public Deferred<Object> deleteUIDMeta(final UIDMeta meta) {
-    uidDeleted.increment();
-    final StringBuilder uri = new StringBuilder(host);
-    uri.append("/").append(index).append("/").append(tsmeta_type).append("/");
-    uri.append(meta.getType().toString()).append(meta.getUID());
-    uri.append("?replication=async");
-    
-    final HttpGet delete = new HttpGet(uri.toString());
-    
-    final Deferred<Object> result = new Deferred<Object>();
-    httpClient.execute(delete, new AsyncCB(result));
-    return result;
+    if (uid_meta_schema != null) {
+      return uid_meta_schema.delete(meta);
+    }
+    return Deferred.<Object>fromResult(false);
   }
-
-  /**
-   * Indexes an annotation object
-   * <b>Note:</b> Unique Document ID = TSUID and Start Time
-   * @param note The annotation to index
-   * @return A deferred object that indicates the completion of the request.
-   * The {@link Object} has not special meaning and can be {@code null}
-   * (think of it as {@code Deferred<Void>}).
-   */
+  
+  @Override
   public Deferred<Object> indexAnnotation(final Annotation note) {
-    final StringBuilder uri = new StringBuilder(host);
-    uri.append("/").append(index).append("/").append(annotation_type).append("/");
-    uri.append(note.getStartTime());
-    if (note != null ) {
-      uri.append(note.getTSUID());
-      annotationAdded.increment();
+    if (annotation_schema != null) {
+      return annotation_schema.index(note);
     }
-    uri.append("?replication=async");
-    
-    final HttpPost post = new HttpPost(uri.toString());
-    post.setEntity(new ByteArrayEntity(JSON.serializeToBytes(note)));
-    
-    final Deferred<Object> result = new Deferred<Object>();
-    httpClient.execute(post, new AsyncCB(result));
-    return result;
+    return Deferred.<Object>fromResult(false);
   }
 
-  /**
-   * Called to remove an annotation object from the index
-   * <b>Note:</b> Unique Document ID = TSUID and Start Time
-   * @param note The annotation to remove
-   * @return A deferred object that indicates the completion of the request.
-   * The {@link Object} has not special meaning and can be {@code null}
-   * (think of it as {@code Deferred<Void>}).
-   */
+  @Override
   public Deferred<Object> deleteAnnotation(final Annotation note) {
-    final StringBuilder uri = new StringBuilder(host);
-    uri.append("/").append(index).append("/").append(annotation_type).append("/");
-    uri.append(note.getStartTime());
-    if (note != null ) {
-      uri.append(note.getTSUID());
-      annotationDeleted.increment();
+    if (annotation_schema != null) {
+      return annotation_schema.delete(note);
     }
-    
-    final HttpGet delete = new HttpGet(uri.toString());
-    
-    final Deferred<Object> result = new Deferred<Object>();
-    httpClient.execute(delete, new AsyncCB(result));
-    return result;
+    return Deferred.<Object>fromResult(false);
   }
-
+  
+  @Override
   public Deferred<SearchQuery> executeQuery(final SearchQuery query) {
     final Deferred<SearchQuery> result = new Deferred<SearchQuery>();
 
@@ -296,14 +299,17 @@ public final class ElasticSearch extends SearchPlugin {
       case TSMETA:
       case TSMETA_SUMMARY:
       case TSUIDS:
-        uri.append(tsmeta_type);
+        uri.append(ts_meta_schema.docType());
         break;
       case UIDMETA:
-        uri.append(uidmeta_type);
+        uri.append(uid_meta_schema.docType());
         break;
       case ANNOTATION:
-        uri.append(annotation_type);
+        uri.append(annotation_schema.docType());
         break;
+      default:
+        return Deferred.fromError(new IllegalArgumentException(
+            "Unhandled query type: " + query.getType()));
     }
     uri.append("/_search");
 
@@ -321,8 +327,8 @@ public final class ElasticSearch extends SearchPlugin {
     final HttpPost post = new HttpPost(uri.toString());
     post.setEntity(new ByteArrayEntity(JSON.serializeToBytes(body)));
 
-    httpClient.execute(post, new SearchCB(query, result));
-    queriesExecuted.increment();
+    http_client.execute(post, new SearchCB(query, result));
+    queries_executed.increment();
     return result;
   }
 
@@ -332,7 +338,9 @@ public final class ElasticSearch extends SearchPlugin {
   @Override
   public Deferred<Object> shutdown() {
     try {
-      httpClient.close();
+      if (http_client != null) {
+        http_client.close();
+      }
       return Deferred.fromResult(null);
     } catch (IOException e) {
       return Deferred.fromError(e);
@@ -346,39 +354,28 @@ public final class ElasticSearch extends SearchPlugin {
   
   @Override
   public void collectStats(final StatsCollector collector) {
-    collector.record("search.tsmeta_added", tsmetaAdded.get());
-    collector.record("search.tsmeta_deleted", tsmetaDeleted.get());
-    collector.record("search.uid_added", uidAdded.get());
-    collector.record("search.uid_deleted", uidDeleted.get());
-    collector.record("search.queries_executed", queriesExecuted.get());
+    if (ts_meta_schema != null) {
+      collector.record("search.tsmeta_added", ts_meta_schema.added());
+      collector.record("search.tsmeta_deleted", ts_meta_schema.deleted());
+      collector.record("search.tsmeta_errors", ts_meta_schema.errors());
+    }
+    
+    if (uid_meta_schema != null) {
+      collector.record("search.uid_added", uid_meta_schema.added());
+      collector.record("search.uid_deleted", uid_meta_schema.deleted());
+      collector.record("search.uid_errors", uid_meta_schema.errors());
+    }
+    
+    if (annotation_schema != null) {
+      collector.record("search.annotation_added", annotation_schema.added());
+      collector.record("search.annotation_deleted", annotation_schema.deleted());
+      collector.record("search.annotation_errors", annotation_schema.errors());
+    }
+    
+    collector.record("search.queries_executed", queries_executed.get());
   }
   
-  final class AsyncCB implements FutureCallback<HttpResponse> {
-
-    final Deferred<Object> deferred;
-
-    public AsyncCB(final Deferred<Object> deferred) {
-      this.deferred = deferred;
-    }
-
-    @Override
-    public void cancelled() {
-      LOG.warn("Post was cancelled");
-    }
-
-    @Override
-    public void completed(final HttpResponse content) {
-      deferred.callback(true);
-    }
-
-    @Override
-    public void failed(Exception e) {
-      LOG.error("Post Exception", e);
-    }
-
-  }
-
-  final class SearchCB implements FutureCallback<HttpResponse> {
+  public class SearchCB implements FutureCallback<HttpResponse> {
 
     final SearchQuery query;
     final Deferred<SearchQuery> result;
@@ -508,13 +505,35 @@ public final class ElasticSearch extends SearchPlugin {
     }
   }
 
-  @VisibleForTesting
   public String host() {
     return host;
   }
 
-  @VisibleForTesting
+  public String index() {
+    return index;
+  }
+  
+  public CloseableHttpAsyncClient httpClient() {
+    return http_client;
+  }
+  
+  public boolean asyncReplication() {
+    return async_replication;
+  }
+  
   public ESPluginConfig config() {
     return config;
+  }
+  
+  public TSMetaSchema tsMetaSchema() {
+    return ts_meta_schema;
+  }
+  
+  public UIDMetaSchema uidMetaSchema() {
+    return uid_meta_schema;
+  }
+  
+  public AnnotationSchema annotationSchema() {
+    return annotation_schema;
   }
 }
