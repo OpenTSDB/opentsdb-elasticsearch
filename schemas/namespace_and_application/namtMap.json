@@ -1,0 +1,80 @@
+{
+	"_source": {
+		"excludes": [
+			"AM_nested.name.lowercase",
+			"tags.key.lowercase",
+			"tags.value",
+			"application.lowercase"
+		]
+	},
+	"properties": {
+		"application.raw": {
+			"type": "string",
+			"index": "no",
+			"doc_values": true
+		},
+		"application.lowercase": {
+			"type": "string",
+			"index": "not_analyzed"
+		},
+		"AM_nested": {
+			"type": "nested",
+			"properties": {
+				"name.lowercase": {
+					"type": "string",
+					"index": "not_analyzed"
+				},
+				"name.raw": {
+					"type": "string",
+					"index": "no",
+					"doc_values": true
+				}
+			}
+		},
+		"tags_value": {
+			"type": "integer"
+		},
+		"tags": {
+			"type": "nested",
+			"properties": {
+				"key.raw": {
+					"type": "string",
+					"index": "no",
+					"doc_values": true
+				},
+				"key.lowercase": {
+					"type": "string",
+					"index": "not_analyzed"
+				},
+				"value.raw": {
+					"type": "string",
+					"index": "no",
+					"doc_values": true
+				},
+				"value": {
+					"type": "string",
+					"index": "not_analyzed"
+				}
+			}
+		},
+		"_id": {
+			"type": "string"
+		},
+		"timestamp": {
+			"type": "date"
+		},
+		"firstSeenTime": {
+			"type": "date"
+		},
+		"lastSeenTime": {
+			"type": "date"
+		},
+		"_all": {
+			"enabled": false
+		},
+		"_source": {
+			"enabled": false
+		}
+
+	}
+}
