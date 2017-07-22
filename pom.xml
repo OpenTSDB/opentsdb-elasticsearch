@@ -45,6 +45,23 @@
             <version>2.2.0</version>
         </dependency>
 
+        <dependency>
+          <groupId>org.elasticsearch</groupId>
+          <artifactId>elasticsearch</artifactId>
+          <version>5.5.0</version>
+        </dependency>
+        <dependency>
+          <groupId>org.elasticsearch.client</groupId>
+          <artifactId>transport</artifactId>
+          <version>5.5.0</version>
+        </dependency>
+        
+        <dependency>
+          <groupId>net.sf.trove4j</groupId>
+          <artifactId>trove4j</artifactId>
+          <version>3.0.3</version>
+        </dependency>
+        
         <!-- test dependencies -->
         <dependency>
           <groupId>com.google.guava</groupId>
@@ -114,7 +131,6 @@
                 <artifactId>maven-shade-plugin</artifactId>
                 <version>1.6</version>
                 <configuration>
-                    <minimizeJar>true</minimizeJar>
                     <createDependencyReducedPom>true</createDependencyReducedPom>
                     <artifactSet>
                         <excludes>
