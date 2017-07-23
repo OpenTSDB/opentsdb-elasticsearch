@@ -6,7 +6,7 @@
            |_|    The modern time series database.
 
 
-[![Build Status](https://travis-ci.org/OpenTSDB/opentsdb-elasticsearch.svg?branch=next)](https://travis-ci.org/OpenTSDB/opentsdb-elasticsearch) [![Coverage Status](https://coveralls.io/repos/github/OpenTSDB/opentsdb-elasticsearch/badge.svg?branch=next)](https://coveralls.io/github/OpenTSDB/opentsdb-elasticsearch?branch=next)
+[![Build Status](https://travis-ci.org/OpenTSDB/opentsdb-elasticsearch.svg?branch=master)](https://travis-ci.org/OpenTSDB/opentsdb-elasticsearch) [![Coverage Status](https://coveralls.io/repos/github/OpenTSDB/opentsdb-elasticsearch/badge.svg?branch=master)](https://coveralls.io/github/OpenTSDB/opentsdb-elasticsearch?branch=master)
  
 Search plugin for OpenTSDB
 
